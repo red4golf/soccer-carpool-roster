@@ -1,13 +1,14 @@
 # Soccer Carpool Roster
 
-A mobile-friendly, shared carpool board for soccer games and practices. This GitHub Pages frontend uses Google sign-in and connects to the hosted roster service so approved families see the same live data.
+A mobile-friendly, shared carpool board for soccer games and practices. This GitHub Pages frontend uses Google or verified email-and-password sign-in and connects to the hosted roster service so approved families see the same live data. Firebase stores passwords and provides password-reset emails; the roster never receives them.
 
 ## Family workflow
 
-- Parents maintain a profile with a general pickup area and private home/alternate addresses.
+- Parents maintain a profile with a general pickup area, private home/alternate addresses, and every child who may need transportation.
 - Approved families can see general pickup areas, offer seats, and request rides.
 - Eligible drivers use **Add to my car**; the service verifies ownership, trip direction, and remaining capacity.
 - Only the assigned driver can reveal an exact private pickup address. Each reveal and route opening is logged.
+- A parent can request the same trip for one or several children at once. Each child consumes one seat and remains independently assignable.
 - Parents can cancel their own requests, and drivers can remove riders or cancel empty driving offers.
 
 Common locations such as schools and parks remain visible through Google Maps links. Private addresses are sent to Google Maps only when an assigned driver opens pickup details or a route.
