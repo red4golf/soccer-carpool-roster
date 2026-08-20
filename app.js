@@ -37,13 +37,13 @@ function render(notice = "") {
   const need = rides.filter(item => !item.driverId).length;
   const seats = drivers.reduce((sum,item)=>sum+item.capacity,0);
   root.innerHTML = `
-    <header class="topbar"><div class="brand"><span class="brandMark">SC</span><span><b>Soccer Carpool</b><small>Team ride board</small></span></div><div class="topActions"><button class="outline small" data-admin>Admin</button><button class="outline small" data-open="event">+ Add event</button></div></header>
-    <section class="hero"><div><p class="eyebrow">NO PLAYER LEFT BEHIND</p><h1>Rides sorted.<br><em>Game on.</em></h1><p class="heroCopy">One shared place for families to offer seats, request a ride, and see exactly who is riding with whom.</p><div class="heroActions"><button class="primary" data-open="driver">I can drive</button><button class="secondary" data-open="ride">My player needs a ride</button></div></div>
-      <div class="scoreCard"><div class="ball">⚽</div><p>${event ? "NEXT "+event.eventType.toUpperCase() : "NEXT TEAM EVENT"}</p><strong>${event ? h(longDate(event.eventDate)) : "Add the first event"}</strong><span>${event ? h(event.departTime+" · "+event.location) : "Build the team schedule"}</span></div>
+    <header class="topbar"><div class="brand"><span class="brandMark">SC</span><span><b>Soccer Carpool</b><small>Team ride board</small></span></div><div class="topActions"><button class="outline small" data-admin>Admin</button></div></header>
+    <section class="hero"><div><p class="eyebrow">NO PLAYER LEFT BEHIND</p><h1>Rides sorted.<br><em>Game on.</em></h1><p class="heroCopy">One shared place for families to offer seats, request a ride, and see exactly who is riding with whom.</p><div class="heroActions"><button class="primary" data-open="driver" ${data.events.length?"":"disabled"}>I can drive</button><button class="secondary" data-open="ride" ${data.events.length?"":"disabled"}>My player needs a ride</button></div></div>
+      <div class="scoreCard"><div class="ball">⚽</div><p>${event ? "NEXT "+event.eventType.toUpperCase() : "NEXT TEAM EVENT"}</p><strong>${event ? h(longDate(event.eventDate)) : "Schedule pending"}</strong><span>${event ? h(event.departTime+" · "+event.location) : "Check back for the next event"}</span></div>
     </section>
     <section class="workspace"><div class="sectionHeading"><div><p class="eyebrow">CARPOOL BOARD</p><h2>Games & practices</h2></div><div class="summaryPills"><span><b>${need}</b> need a seat</span><span><b>${seats}</b> seats offered</span></div></div>
       ${notice ? `<div class="notice">${h(notice)}</div>` : ""}
-      ${!data.events.length ? `<div class="empty"><div>⚽</div><h3>Start with the next team event</h3><p>Add a game or practice, then parents can volunteer or request a ride.</p><button class="primary" data-open="event">Add the first event</button></div>` : `
+      ${!data.events.length ? `<div class="empty"><div>⚽</div><h3>The schedule is coming soon</h3><p>An administrator will add the next game or practice. Once it appears, families can offer seats or request a ride.</p></div>` : `
         <div class="eventTabs" role="tablist">${data.events.map(item=>`<button data-event="${item.id}" class="${item.id===selected?"active":""}"><small><span class="eventType ${item.eventType}">${h(item.eventType)}</span>${h(shortDate(item.eventDate))}</small><b>${h(item.title)}</b><span>${h(item.departTime)}</span></button>`).join("")}</div>
         <div class="eventHeader"><div><p>${h(longDate(event.eventDate))} · Depart ${h(event.departTime)}</p><h3>${h(event.title)}</h3><span>${h(event.location)} · Meet at ${h(event.meetAt)}</span></div><div class="eventButtons"><button class="outline" data-open="driver">Offer seats</button><button class="primary" data-open="ride">Request ride</button></div></div>
         <div class="boardGrid">
@@ -102,21 +102,20 @@ const trip = () => `<label>Trip<select name="direction"><option value="roundtrip
 const eventOptions = () => data.events.map(item=>`<option value="${item.id}" ${item.id===selected?"selected":""}>${item.eventType==="practice"?"Practice":"Game"}: ${h(item.title)} · ${h(shortDate(item.eventDate))}</option>`).join("");
 
 function openModal(kind) {
-  if ((kind==="driver"||kind==="ride")&&!data.events.length){kind="event"}
-  const titles={event:"Add a game or practice",player:"Add a player",driver:"Volunteer to drive",ride:"Request a ride"};
+  if ((kind==="driver"||kind==="ride")&&!data.events.length)return;
+  const titles={player:"Add a player",driver:"Volunteer to drive",ride:"Request a ride"};
   let fields="";
-  if(kind==="event") fields=`<label>Event type<select name="eventType"><option value="game">Game</option><option value="practice">Practice</option></select></label>${field("title","Name","text","Tuesday practice or vs. Harbor United")}<div class="two">${field("eventDate","Date","date")}${field("departTime","Departure","time")}</div>${field("location","Destination","text","Battle Point Park")}${field("meetAt","Meet at","text","Clubhouse parking lot")}${field("notes","Notes","text","Field 3, wear white jerseys, etc.",false)}`;
   if(kind==="player") fields=`${field("name","Player name")}${field("guardian","Parent / guardian")}${field("phone","Best contact number","tel")}`;
   if(kind==="driver") fields=`<label>Game or practice<select name="eventId">${eventOptions()}</select></label>${field("parentName","Driver name")}${field("phone","Mobile number","tel")}<div class="two">${trip()}${field("capacity","Open seats","number")}</div>${field("notes","Pickup notes","text","Can meet at the school",false)}`;
   if(kind==="ride") fields=`<label>Game or practice<select name="eventId">${eventOptions()}</select></label>${data.players.length?`<label>Player<select name="playerId" required><option value="">Select a player</option>${data.players.map(p=>`<option value="${p.id}">${h(p.name)}</option>`).join("")}</select></label>`:`<div class="notice">Add a player first.</div><button type="button" class="outline" data-add-player>Add player</button>`}${trip()}${field("notes","Notes","text","Booster seat, alternate pickup, etc.",false)}`;
-  document.body.insertAdjacentHTML("beforeend",`<div class="modalBackdrop" id="modal"><div class="modal"><button class="close" aria-label="Close">×</button><p class="eyebrow">TEAM RIDE BOARD</p><h2>${titles[kind]}</h2><form id="modalForm">${fields}<button class="primary submit">${kind==="event"?"Add event":kind==="player"?"Save player":kind==="driver"?"Offer seats":"Request ride"}</button></form></div></div>`);
+  document.body.insertAdjacentHTML("beforeend",`<div class="modalBackdrop" id="modal"><div class="modal"><button class="close" aria-label="Close">×</button><p class="eyebrow">TEAM RIDE BOARD</p><h2>${titles[kind]}</h2><form id="modalForm">${fields}<button class="primary submit">${kind==="player"?"Save player":kind==="driver"?"Offer seats":"Request ride"}</button></form></div></div>`);
   const modal=document.querySelector("#modal");
   modal.querySelector(".close").addEventListener("click",()=>modal.remove());
   modal.addEventListener("click",event=>{if(event.target===modal)modal.remove()});
   modal.querySelector("[data-add-player]")?.addEventListener("click",()=>{modal.remove();openModal("player")});
   modal.querySelector("#modalForm").addEventListener("submit",async event=>{
     event.preventDefault();
-    const action=kind==="event"?"create_event":kind==="player"?"add_player":kind==="driver"?"volunteer":"request_ride";
+    const action=kind==="player"?"add_player":kind==="driver"?"volunteer":"request_ride";
     try{await api("POST",{action,...Object.fromEntries(new FormData(event.target))});modal.remove();await refresh("Roster updated.");}
     catch(error){alert(error.message)}
   });
