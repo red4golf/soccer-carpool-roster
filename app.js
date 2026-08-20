@@ -1,7 +1,8 @@
 const API = "https://soccer-carpool-roster.awtrescue-org.chatgpt.site/api/carpool";
+const ADMIN_API = "https://soccer-carpool-roster.awtrescue-org.chatgpt.site/api/admin";
 const root = document.querySelector("#app");
 let pin = sessionStorage.getItem("soccer-carpool-pin") || "";
-let data = { events: [], players: [], drivers: [], rides: [] };
+let data = { events: [], players: [], drivers: [], rides: [], driverProfiles: [] };
 let selected = null;
 
 const h = (value = "") => String(value).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
@@ -36,7 +37,7 @@ function render(notice = "") {
   const need = rides.filter(item => !item.driverId).length;
   const seats = drivers.reduce((sum,item)=>sum+item.capacity,0);
   root.innerHTML = `
-    <header class="topbar"><div class="brand"><span class="brandMark">SC</span><span><b>Soccer Carpool</b><small>Team ride board</small></span></div><button class="outline small" data-open="event">+ Add event</button></header>
+    <header class="topbar"><div class="brand"><span class="brandMark">SC</span><span><b>Soccer Carpool</b><small>Team ride board</small></span></div><div class="topActions"><button class="outline small" data-admin>Admin</button><button class="outline small" data-open="event">+ Add event</button></div></header>
     <section class="hero"><div><p class="eyebrow">NO PLAYER LEFT BEHIND</p><h1>Rides sorted.<br><em>Game on.</em></h1><p class="heroCopy">One shared place for families to offer seats, request a ride, and see exactly who is riding with whom.</p><div class="heroActions"><button class="primary" data-open="driver">I can drive</button><button class="secondary" data-open="ride">My player needs a ride</button></div></div>
       <div class="scoreCard"><div class="ball">⚽</div><p>${event ? "NEXT "+event.eventType.toUpperCase() : "NEXT TEAM EVENT"}</p><strong>${event ? h(longDate(event.eventDate)) : "Add the first event"}</strong><span>${event ? h(event.departTime+" · "+event.location) : "Build the team schedule"}</span></div>
     </section>
@@ -64,12 +65,36 @@ function render(notice = "") {
 }
 
 function bind() {
+  document.querySelector("[data-admin]")?.addEventListener("click",openAdmin);
   document.querySelectorAll("[data-open]").forEach(button => button.addEventListener("click",()=>openModal(button.dataset.open)));
   document.querySelectorAll("[data-event]").forEach(button => button.addEventListener("click",()=>{selected=Number(button.dataset.event);render()}));
   document.querySelectorAll("[data-assign]").forEach(select => select.addEventListener("change",async()=>{
     try { await api("POST",{action:"assign",rideId:select.dataset.assign,driverId:select.value}); await refresh("Player assignment updated."); }
     catch(error){ alert(error.message); }
   }));
+}
+
+const adminHelp = {
+  schedule:{title:"Schedule",columns:"type, title, date, departure, location, meet_at, notes",sample:"practice,Tuesday practice,2026-09-08,17:15,Memorial Field,School parking lot,Bring water"},
+  players:{title:"Kid names",columns:"player, guardian, phone",sample:"Alex Rivera,Jamie Rivera,206-555-0142"},
+  drivers:{title:"Driver info",columns:"driver, phone, capacity, notes",sample:"Jamie Rivera,206-555-0142,4,Can meet at school"}
+};
+function parseCsv(source){
+  const rows=[];let row=[],field="",quoted=false;
+  for(let i=0;i<source.length;i++){const ch=source[i];if(ch==='"'){if(quoted&&source[i+1]==='"'){field+='"';i++}else quoted=!quoted}else if(ch===','&&!quoted){row.push(field.trim());field=""}else if((ch==='\n'||ch==='\r')&&!quoted){if(ch==='\r'&&source[i+1]==='\n')i++;row.push(field.trim());if(row.some(Boolean))rows.push(row);row=[];field=""}else field+=ch}
+  row.push(field.trim());if(row.some(Boolean))rows.push(row);if(rows.length<2)throw new Error("The CSV needs a header row and at least one data row.");
+  const names=rows[0].map(value=>value.toLowerCase().replace(/^\uFEFF/,""));return rows.slice(1).map(values=>Object.fromEntries(names.map((name,index)=>[name,values[index]||""])));
+}
+function openAdmin(){
+  document.body.insertAdjacentHTML("beforeend",`<div class="modalBackdrop" id="adminModal"><div class="modal adminModal"><button class="close" aria-label="Close">×</button><p class="eyebrow">PRIVATE TEAM TOOLS</p><h2>Administrator</h2><div id="adminBody"><form id="adminLogin"><p class="adminIntro">Enter the administrator password to load team data. This is separate from the parent PIN.</p><label>Administrator password<input name="password" type="password" required autofocus></label><div id="adminNotice"></div><button class="primary submit">Open admin tools</button></form></div></div></div>`);
+  const modal=document.querySelector("#adminModal"),body=modal.querySelector("#adminBody");let password="",counts={schedule:0,players:0,drivers:0},kind="schedule";
+  const close=()=>modal.remove();modal.querySelector(".close").addEventListener("click",close);modal.addEventListener("click",event=>{if(event.target===modal)close()});
+  const adminApi=async(method="GET",payload)=>{const response=await fetch(ADMIN_API,{method,headers:{"content-type":"application/json","x-admin-password":password},body:payload?JSON.stringify(payload):undefined});const result=await response.json();if(!response.ok)throw new Error(result.error||"Admin request failed");return result};
+  const showTools=()=>{const help=adminHelp[kind];body.innerHTML=`<div class="adminCounts"><span><b>${counts.schedule}</b> events</span><span><b>${counts.players}</b> players</span><span><b>${counts.drivers}</b> drivers</span></div><div class="importTabs">${Object.keys(adminHelp).map(item=>`<button class="${item===kind?"active":""}" data-kind="${item}">${adminHelp[item].title}</button>`).join("")}</div><form id="adminImport" class="importForm"><h3>Load ${help.title.toLowerCase()} from CSV</h3><p>First row must use these columns:</p><code>${h(help.columns)}</code><small>Example: ${h(help.sample)}</small><label>CSV file<input name="file" type="file" accept=".csv,text/csv" required></label><div id="adminNotice"></div><button class="primary submit">Load CSV</button></form>`;
+    body.querySelectorAll("[data-kind]").forEach(button=>button.addEventListener("click",()=>{kind=button.dataset.kind;showTools()}));
+    body.querySelector("#adminImport").addEventListener("submit",async event=>{event.preventDefault();const button=event.target.querySelector("button"),notice=event.target.querySelector("#adminNotice"),file=new FormData(event.target).get("file");button.disabled=true;button.textContent="Loading…";try{const rows=parseCsv(await file.text()),result=await adminApi("POST",{kind,rows});counts=result.counts;await refresh();showTools();body.querySelector("#adminNotice").innerHTML=`<div class="notice">${result.imported} rows loaded.</div>`}catch(error){notice.innerHTML=`<div class="notice error">${h(error.message)}</div>`;button.disabled=false;button.textContent="Load CSV"}});
+  };
+  modal.querySelector("#adminLogin").addEventListener("submit",async event=>{event.preventDefault();const button=event.target.querySelector("button"),notice=event.target.querySelector("#adminNotice");password=new FormData(event.target).get("password");button.disabled=true;button.textContent="Checking…";try{const result=await adminApi();counts=result.counts;showTools()}catch(error){notice.innerHTML=`<div class="notice error">${h(error.message)}</div>`;button.disabled=false;button.textContent="Open admin tools"}});
 }
 
 const field = (name,label,type="text",placeholder="",required=true) => `<label>${label}<input name="${name}" type="${type}" placeholder="${h(placeholder)}" ${required?"required":""}></label>`;
