@@ -1,8 +1,10 @@
 const API = "https://soccer-carpool-roster.awtrescue-org.chatgpt.site/api/carpool";
 const ADMIN_API = "https://soccer-carpool-roster.awtrescue-org.chatgpt.site/api/admin";
+const PROFILE_API = "https://soccer-carpool-roster.awtrescue-org.chatgpt.site/api/profile";
+const firebaseConfig={apiKey:"AIzaSyAnzyxw5whft5kgeZKs1P3NCf-8QlSK-T8",authDomain:"soccer-rideshare.firebaseapp.com",projectId:"soccer-rideshare",storageBucket:"soccer-rideshare.firebasestorage.app",messagingSenderId:"704817990804",appId:"1:704817990804:web:59c66c9285397a59883881"};
 const root = document.querySelector("#app");
-let pin = sessionStorage.getItem("soccer-carpool-pin") || "";
-let data = { events: [], players: [], drivers: [], rides: [], driverProfiles: [] };
+let currentUser=null,idToken="",profile=null;
+let data = { events: [], players: [], drivers: [], rides: [], driverProfiles: [], directory: [] };
 let selected = null;
 
 const h = (value = "") => String(value).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
@@ -10,7 +12,7 @@ const initials = name => name.split(/\s+/).map(n => n[0]).join("").slice(0,2).to
 const direction = value => value === "to" ? "Drop-off" : value === "from" ? "Pickup / ride home" : "Round trip";
 const shortDate = value => new Date(value + "T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"});
 const longDate = value => new Date(value + "T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
-const headers = () => ({"content-type":"application/json","x-team-pin":pin});
+const headers = () => ({"content-type":"application/json","authorization":`Bearer ${idToken}`});
 
 async function api(method = "GET", body) {
   const response = await fetch(API, { method, headers: headers(), body: body ? JSON.stringify(body) : undefined });
@@ -20,13 +22,11 @@ async function api(method = "GET", body) {
 }
 
 function login(message = "") {
-  root.innerHTML = `<main class="pinPage"><section class="pinCard"><span class="brandMark">SC</span><p class="eyebrow">SOCCER CARPOOL</p><h1>Team access</h1><p>Enter the team PIN to view rides, volunteer to drive, or request a seat.</p><form id="login"><label>Team PIN<input name="pin" value="${h(pin)}" inputmode="numeric" autocomplete="one-time-code" required autofocus></label>${message ? `<div class="notice error" role="alert">${h(message)}</div>` : ""}<button class="primary">Open roster</button></form></section></main>`;
-  document.querySelector("#login").addEventListener("submit", async event => {
-    event.preventDefault(); pin = new FormData(event.target).get("pin").trim();
-    try { data = await api(); sessionStorage.setItem("soccer-carpool-pin", pin); selected = data.events[0]?.id || null; render(); }
-    catch (error) { login(error.message); }
-  });
+  root.innerHTML = `<main class="pinPage"><section class="pinCard"><span class="brandMark">SC</span><p class="eyebrow">SOCCER CARPOOL</p><h1>Team sign-in</h1><p>Use your Google account to open the private team roster.</p>${message ? `<div class="notice error" role="alert">${h(message)}</div>` : ""}<button class="googleButton" id="googleLogin"><span>G</span>Continue with Google</button><small class="privacyNote">Only administrator-approved parents can see team information.</small></section></main>`;
+  document.querySelector("#googleLogin").addEventListener("click",async()=>{try{await firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider())}catch(error){login(error.message)}});
 }
+
+function pending(){root.innerHTML=`<main class="pinPage"><section class="pinCard pendingCard"><span class="brandMark">SC</span><p class="eyebrow">SIGNED IN AS ${h(profile.email)}</p><h1>Approval pending</h1><p>Complete your parent profile, then an administrator can approve access to the team roster.</p><div class="pendingActions"><button class="primary" data-profile>${profile.homePickup?"Edit profile":"Complete profile"}</button><button class="outline" data-admin>Administrator</button><button class="textButton" data-signout>Sign out</button></div></section></main>`;document.querySelector("[data-profile]").addEventListener("click",openProfile);document.querySelector("[data-admin]").addEventListener("click",openAdmin);document.querySelector("[data-signout]").addEventListener("click",()=>firebase.auth().signOut())}
 
 function render(notice = "") {
   const event = data.events.find(item => item.id === selected) || data.events[0] || null;
@@ -37,7 +37,7 @@ function render(notice = "") {
   const need = rides.filter(item => !item.driverId).length;
   const seats = drivers.reduce((sum,item)=>sum+item.capacity,0);
   root.innerHTML = `
-    <header class="topbar"><div class="brand"><span class="brandMark">SC</span><span><b>Soccer Carpool</b><small>Team ride board</small></span></div><div class="topActions"><button class="outline small" data-admin>Admin</button></div></header>
+    <header class="topbar"><div class="brand"><span class="brandMark">SC</span><span><b>Soccer Carpool</b><small>Team ride board</small></span></div><div class="topActions"><button class="outline small" data-directory>Families</button><button class="outline small" data-profile>My profile</button><button class="outline small" data-admin>Admin</button><button class="outline small" data-signout>Sign out</button></div></header>
     <section class="hero"><div><p class="eyebrow">NO PLAYER LEFT BEHIND</p><h1>Rides sorted.<br><em>Game on.</em></h1><p class="heroCopy">One shared place for families to offer seats, request a ride, and see exactly who is riding with whom.</p><div class="heroActions"><button class="primary" data-open="driver" ${data.events.length?"":"disabled"}>I can drive</button><button class="secondary" data-open="ride" ${data.events.length?"":"disabled"}>My player needs a ride</button></div></div>
       <div class="scoreCard"><div class="ball">⚽</div><p>${event ? "NEXT "+event.eventType.toUpperCase() : "NEXT TEAM EVENT"}</p><strong>${event ? h(longDate(event.eventDate)) : "Schedule pending"}</strong><span>${event ? h(event.departTime+" · "+event.location) : "Check back for the next event"}</span></div>
     </section>
@@ -66,6 +66,9 @@ function render(notice = "") {
 
 function bind() {
   document.querySelector("[data-admin]")?.addEventListener("click",openAdmin);
+  document.querySelector("[data-profile]")?.addEventListener("click",openProfile);
+  document.querySelector("[data-directory]")?.addEventListener("click",openDirectory);
+  document.querySelector("[data-signout]")?.addEventListener("click",()=>firebase.auth().signOut());
   document.querySelectorAll("[data-open]").forEach(button => button.addEventListener("click",()=>openModal(button.dataset.open)));
   document.querySelectorAll("[data-event]").forEach(button => button.addEventListener("click",()=>{selected=Number(button.dataset.event);render()}));
   document.querySelectorAll("[data-assign]").forEach(select => select.addEventListener("change",async()=>{
@@ -86,16 +89,25 @@ function parseCsv(source){
   const names=rows[0].map(value=>value.toLowerCase().replace(/^\uFEFF/,""));return rows.slice(1).map(values=>Object.fromEntries(names.map((name,index)=>[name,values[index]||""])));
 }
 function openAdmin(){
-  document.body.insertAdjacentHTML("beforeend",`<div class="modalBackdrop" id="adminModal"><div class="modal adminModal"><button class="close" aria-label="Close">×</button><p class="eyebrow">PRIVATE TEAM TOOLS</p><h2>Administrator</h2><div id="adminBody"><form id="adminLogin"><p class="adminIntro">Enter the administrator password to load team data. This is separate from the parent PIN.</p><label>Administrator password<input name="password" type="password" required autofocus></label><div id="adminNotice"></div><button class="primary submit">Open admin tools</button></form></div></div></div>`);
-  const modal=document.querySelector("#adminModal"),body=modal.querySelector("#adminBody");let password="",counts={schedule:0,players:0,drivers:0},kind="schedule";
+  document.body.insertAdjacentHTML("beforeend",`<div class="modalBackdrop" id="adminModal"><div class="modal adminModal"><button class="close" aria-label="Close">×</button><p class="eyebrow">PRIVATE TEAM TOOLS</p><h2>Administrator</h2><div id="adminBody"><form id="adminLogin"><p class="adminIntro">Enter the administrator password to approve parents and load team data. This is separate from Google sign-in.</p><label>Administrator password<input name="password" type="password" required autofocus></label><div id="adminNotice"></div><button class="primary submit">Open admin tools</button></form></div></div></div>`);
+  const modal=document.querySelector("#adminModal"),body=modal.querySelector("#adminBody");let password="",counts={schedule:0,players:0,drivers:0},profiles=[],kind="schedule";
   const close=()=>modal.remove();modal.querySelector(".close").addEventListener("click",close);modal.addEventListener("click",event=>{if(event.target===modal)close()});
   const adminApi=async(method="GET",payload)=>{const response=await fetch(ADMIN_API,{method,headers:{"content-type":"application/json","x-admin-password":password},body:payload?JSON.stringify(payload):undefined});const result=await response.json();if(!response.ok)throw new Error(result.error||"Admin request failed");return result};
-  const showTools=()=>{const help=adminHelp[kind];body.innerHTML=`<div class="adminCounts"><span><b>${counts.schedule}</b> events</span><span><b>${counts.players}</b> players</span><span><b>${counts.drivers}</b> drivers</span></div><div class="importTabs">${Object.keys(adminHelp).map(item=>`<button class="${item===kind?"active":""}" data-kind="${item}">${adminHelp[item].title}</button>`).join("")}</div><form id="adminImport" class="importForm"><h3>Load ${help.title.toLowerCase()} from CSV</h3><p>First row must use these columns:</p><code>${h(help.columns)}</code><small>Example: ${h(help.sample)}</small><label>CSV file<input name="file" type="file" accept=".csv,text/csv" required></label><div id="adminNotice"></div><button class="primary submit">Load CSV</button></form>`;
+  const showTools=()=>{const help=adminHelp[kind];body.innerHTML=`<div class="adminCounts"><span><b>${counts.schedule}</b> events</span><span><b>${counts.players}</b> players</span><span><b>${profiles.filter(item=>item.approved).length}</b> approved parents</span></div><section class="approvalList"><h3>Parent access</h3>${profiles.length?profiles.map(item=>`<div class="approvalRow"><div><b>${h(item.displayName)}</b><small>${h(item.email)}</small></div><button class="${item.approved?"outline":"primary"} small" data-approve="${item.id}" data-status="${item.approved?0:1}">${item.approved?"Pause access":"Approve"}</button></div>`).join(""):`<p>No parents have signed in yet.</p>`}</section><div class="importTabs">${Object.keys(adminHelp).map(item=>`<button class="${item===kind?"active":""}" data-kind="${item}">${adminHelp[item].title}</button>`).join("")}</div><form id="adminImport" class="importForm"><h3>Load ${help.title.toLowerCase()} from CSV</h3><p>First row must use these columns:</p><code>${h(help.columns)}</code><small>Example: ${h(help.sample)}</small><label>CSV file<input name="file" type="file" accept=".csv,text/csv" required></label><div id="adminNotice"></div><button class="primary submit">Load CSV</button></form>`;
     body.querySelectorAll("[data-kind]").forEach(button=>button.addEventListener("click",()=>{kind=button.dataset.kind;showTools()}));
+    body.querySelectorAll("[data-approve]").forEach(button=>button.addEventListener("click",async()=>{try{await adminApi("POST",{action:"set_profile_status",profileId:button.dataset.approve,approved:button.dataset.status==="1"});const result=await adminApi();profiles=result.profiles||[];showTools()}catch(error){alert(error.message)}}));
     body.querySelector("#adminImport").addEventListener("submit",async event=>{event.preventDefault();const button=event.target.querySelector("button"),notice=event.target.querySelector("#adminNotice"),file=new FormData(event.target).get("file");button.disabled=true;button.textContent="Loading…";try{const rows=parseCsv(await file.text()),result=await adminApi("POST",{kind,rows});counts=result.counts;await refresh();showTools();body.querySelector("#adminNotice").innerHTML=`<div class="notice">${result.imported} rows loaded.</div>`}catch(error){notice.innerHTML=`<div class="notice error">${h(error.message)}</div>`;button.disabled=false;button.textContent="Load CSV"}});
   };
-  modal.querySelector("#adminLogin").addEventListener("submit",async event=>{event.preventDefault();const button=event.target.querySelector("button"),notice=event.target.querySelector("#adminNotice");password=new FormData(event.target).get("password");button.disabled=true;button.textContent="Checking…";try{const result=await adminApi();counts=result.counts;showTools()}catch(error){notice.innerHTML=`<div class="notice error">${h(error.message)}</div>`;button.disabled=false;button.textContent="Open admin tools"}});
+  modal.querySelector("#adminLogin").addEventListener("submit",async event=>{event.preventDefault();const button=event.target.querySelector("button"),notice=event.target.querySelector("#adminNotice");password=new FormData(event.target).get("password");button.disabled=true;button.textContent="Checking…";try{const result=await adminApi();counts=result.counts;profiles=result.profiles||[];showTools()}catch(error){notice.innerHTML=`<div class="notice error">${h(error.message)}</div>`;button.disabled=false;button.textContent="Open admin tools"}});
 }
+
+function openProfile(){
+  const checks=(data.players||[]).map(player=>`<label><input type="checkbox" name="playerIds" value="${player.id}" ${(profile.playerIds||[]).includes(player.id)?"checked":""}>${h(player.name)}</label>`).join("");
+  document.body.insertAdjacentHTML("beforeend",`<div class="modalBackdrop" id="profileModal"><div class="modal"><button class="close">×</button><p class="eyebrow">PRIVATE PARENT PROFILE</p><h2>My profile</h2><form id="profileForm"><label>Parent name<input name="displayName" value="${h(profile.displayName)}" required></label><label>Mobile number<input name="phone" type="tel" value="${h(profile.phone)}" required></label><label>Home pickup address<input name="homePickup" value="${h(profile.homePickup)}" required></label><label>Alternate pickup location<input name="alternatePickup" value="${h(profile.alternatePickup)}"></label><label>Vehicle type<input name="vehicleType" value="${h(profile.vehicleType)}" placeholder="Blue Honda Odyssey"></label><label>Typical available seats<input name="defaultSeats" type="number" min="1" max="8" value="${profile.defaultSeats||3}" required></label>${checks?`<fieldset class="playerChecks"><legend>My players</legend>${checks}</fieldset>`:""}<div id="profileNotice"></div><button class="primary submit">Save profile</button></form></div></div>`);
+  const modal=document.querySelector("#profileModal");modal.querySelector(".close").addEventListener("click",()=>modal.remove());modal.addEventListener("click",event=>{if(event.target===modal)modal.remove()});modal.querySelector("form").addEventListener("submit",async event=>{event.preventDefault();const form=new FormData(event.target),button=event.target.querySelector("button");button.disabled=true;try{const body={displayName:form.get("displayName"),phone:form.get("phone"),homePickup:form.get("homePickup"),alternatePickup:form.get("alternatePickup"),vehicleType:form.get("vehicleType"),defaultSeats:form.get("defaultSeats"),playerIds:form.getAll("playerIds")},response=await fetch(PROFILE_API,{method:"POST",headers:{"content-type":"application/json",authorization:`Bearer ${idToken}`},body:JSON.stringify(body)}),result=await response.json();if(!response.ok)throw new Error(result.error);const reload=await fetch(PROFILE_API,{headers:{authorization:`Bearer ${idToken}`}}),payload=await reload.json();profile=payload.profile;modal.remove();profile.approved?await refresh("Profile updated."):pending()}catch(error){event.target.querySelector("#profileNotice").innerHTML=`<div class="notice error">${h(error.message)}</div>`;button.disabled=false}})
+}
+
+function openDirectory(){const players=new Map(data.players.map(item=>[item.id,item.name]));document.body.insertAdjacentHTML("beforeend",`<div class="modalBackdrop" id="directoryModal"><div class="modal directoryModal"><button class="close">×</button><p class="eyebrow">SIGNED-IN FAMILIES ONLY</p><h2>Team directory</h2><div class="directoryGrid">${(data.directory||[]).map(item=>`<article><div class="avatar">${h(initials(item.displayName))}</div><div><h3>${h(item.displayName)}</h3><p>${h(item.phone)}</p><dl><dt>Home pickup</dt><dd>${h(item.homePickup||"Not provided")}</dd><dt>Alternate pickup</dt><dd>${h(item.alternatePickup||"Not provided")}</dd><dt>Vehicle</dt><dd>${h(item.vehicleType||"Not provided")} · ${item.defaultSeats} seats</dd>${item.playerIds?.length?`<dt>Players</dt><dd>${h(item.playerIds.map(id=>players.get(id)).filter(Boolean).join(", "))}</dd>`:""}</dl></div></article>`).join("")}</div></div></div>`);const modal=document.querySelector("#directoryModal");modal.querySelector(".close").addEventListener("click",()=>modal.remove());modal.addEventListener("click",event=>{if(event.target===modal)modal.remove()})}
 
 const field = (name,label,type="text",placeholder="",required=true) => `<label>${label}<input name="${name}" type="${type}" placeholder="${h(placeholder)}" ${required?"required":""}></label>`;
 const trip = () => `<label>Trip<select name="direction"><option value="roundtrip">Round trip</option><option value="to">Drop-off</option><option value="from">Pickup / ride home</option></select></label>`;
@@ -121,6 +133,7 @@ function openModal(kind) {
   });
 }
 
-async function refresh(notice=""){data=await api();if(!data.events.some(event=>event.id===selected))selected=data.events[0]?.id||null;render(notice)}
+async function refresh(notice=""){idToken=await currentUser.getIdToken();data=await api();if(!data.events.some(event=>event.id===selected))selected=data.events[0]?.id||null;render(notice)}
 
-if(pin){api().then(payload=>{data=payload;selected=data.events[0]?.id||null;render()}).catch(()=>{sessionStorage.removeItem("soccer-carpool-pin");pin="";login()})}else login();
+firebase.initializeApp(firebaseConfig);
+firebase.auth().onAuthStateChanged(async user=>{currentUser=user;if(!user){idToken="";profile=null;login();return}try{idToken=await user.getIdToken();const response=await fetch(PROFILE_API,{headers:{authorization:`Bearer ${idToken}`}}),payload=await response.json();if(!response.ok)throw new Error(payload.error);profile=payload.profile;if(!profile.approved){pending();return}data=await api();selected=data.events[0]?.id||null;render()}catch(error){login(error.message)}});
