@@ -51,8 +51,8 @@ function render(notice = "") {
         <div class="boardGrid">
           <section class="boardColumn"><div class="columnTitle"><div><span class="dot green"></span><h3>Drivers</h3></div><b>${drivers.length}</b></div>
             ${drivers.length ? drivers.map(driver=>{
-              const assigned=rides.filter(ride=>ride.driverId===driver.id),remaining=Math.max(0,driver.capacity-assigned.length);
-              return `<article class="card"><div class="cardTop"><div class="avatar">${h(initials(driver.parentName))}</div><div><h4>${h(driver.parentName)}</h4><p>${h(direction(driver.direction))}</p></div><span class="badge">${remaining} ${remaining===1?"seat":"seats"} open</span></div>${assigned.length?`<div class="passengers"><small>RIDING WITH ${h(driver.parentName.split(" ")[0].toUpperCase())}</small>${assigned.map(ride=>`<span>✓ ${h(players.get(ride.playerId)?.name||"Player")}</span>`).join("")}</div>`:""}${driver.notes?`<p>“${h(driver.notes)}”</p>`:""}</article>`;
+              const assigned=rides.filter(ride=>ride.driverId===driver.id),remaining=Math.max(0,driver.capacity-assigned.length),routeUrl=freeRouteUrl(event,assigned,locations);
+              return `<article class="card"><div class="cardTop"><div class="avatar">${h(initials(driver.parentName))}</div><div><h4>${h(driver.parentName)}</h4><p>${h(direction(driver.direction))}</p></div><span class="badge">${remaining} ${remaining===1?"seat":"seats"} open</span></div>${assigned.length?`<div class="passengers"><small>RIDING WITH ${h(driver.parentName.split(" ")[0].toUpperCase())}</small>${assigned.map(ride=>`<span>✓ ${h(players.get(ride.playerId)?.name||"Player")}</span>`).join("")}</div>${routeUrl?`<a class="routeButton" href="${h(routeUrl)}" target="_blank" rel="noreferrer">🧭 Open pickup route</a>`:""}`:""}${driver.notes?`<p>“${h(driver.notes)}”</p>`:""}</article>`;
             }).join("") : `<div class="empty">No drivers yet. Be the first to offer seats.</div>`}
           </section>
           <section class="boardColumn"><div class="columnTitle"><div><span class="dot amber"></span><h3>Ride requests</h3></div><b>${rides.length}</b></div>
@@ -131,6 +131,7 @@ function openDirectory(){const players=new Map(data.players.map(item=>[item.id,i
 const field = (name,label,type="text",placeholder="",required=true) => `<label>${label}<input name="${name}" type="${type}" placeholder="${h(placeholder)}" ${required?"required":""}></label>`;
 const trip = () => `<label>Trip<select name="direction"><option value="roundtrip">Round trip</option><option value="to">Drop-off</option><option value="from">Pickup / ride home</option></select></label>`;
 const eventOptions = () => data.events.map(item=>`<option value="${item.id}" ${item.id===selected?"selected":""}>${item.eventType==="practice"?"Practice":"Game"}: ${h(item.title)} · ${h(shortDate(item.eventDate))}</option>`).join("");
+function freeRouteUrl(event,rides,locations){const stops=[...new Set(rides.map(ride=>locations.get(ride.locationId)?.name).filter(Boolean))].slice(0,9);if(!event||!stops.length)return "";const params=new URLSearchParams({api:"1",destination:event.location,travelmode:"driving"});params.set("waypoints",stops.join("|"));return `https://www.google.com/maps/dir/?${params.toString()}`}
 
 function openModal(kind) {
   if ((kind==="driver"||kind==="ride")&&!data.events.length)return;
