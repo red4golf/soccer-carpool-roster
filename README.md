@@ -9,6 +9,7 @@ A mobile-friendly, shared carpool board for soccer games and practices. This Git
 - Eligible drivers use **Add to my car**; the service verifies ownership, trip direction, and remaining capacity.
 - Only the assigned driver can reveal an exact private pickup address. Each reveal and route opening is logged.
 - A parent can request the same trip for one or several children at once. Each child consumes one seat and remains independently assignable.
+- Households can save additional adult drivers and multiple vehicles. Either parent may select the actual driver and vehicle when offering seats.
 - Parents can cancel their own requests, and drivers can remove riders or cancel empty driving offers.
 - Administrators can review and correct parent-to-player connections, including linking two approved parents to the same child.
 
