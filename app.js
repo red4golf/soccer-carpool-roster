@@ -77,7 +77,7 @@ function bind() {
     try { await api("POST",{action:"assign",rideId:select.dataset.assign,driverId:select.value}); await refresh("Player assignment updated."); }
     catch(error){ alert(error.message); }
   }));
-  document.querySelectorAll("[data-route]").forEach(button=>button.addEventListener("click",async()=>{const popup=window.open("","_blank");try{const result=await api("POST",{action:"open_route",driverId:button.dataset.route});if(popup)popup.location.href=result.url;else window.location.href=result.url}catch(error){popup?.close();alert(error.message)}}));
+  document.querySelectorAll("[data-route]").forEach(button=>button.addEventListener("click",async()=>{const popup=window.open("","_blank");try{const result=await api("POST",{action:"open_route",driverId:button.dataset.route});if(popup)popup.location.href=result.url;else window.location.href=result.url;const response=await fetch(PROFILE_API,{cache:"no-store",headers:{authorization:`Bearer ${idToken}`}});if(response.ok)profile=(await response.json()).profile}catch(error){popup?.close();alert(error.message)}}));
 }
 
 const adminHelp = {
