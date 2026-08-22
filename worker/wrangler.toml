@@ -2,6 +2,10 @@ name = "soccer-carpool"
 main = "src/index.js"
 compatibility_date = "2026-08-01"
 
+# Serve on the account's workers.dev subdomain. Explicit so a future config
+# change cannot silently take the API offline.
+workers_dev = true
+
 # Free-tier sizing note: Workers allows 100k requests/day and D1 allows 5 GB
 # with 5M row-reads/day. A 300-family club generating ~5k requests/day uses
 # roughly 5% of that, so the whole thing runs at no cost.
@@ -9,8 +13,8 @@ compatibility_date = "2026-08-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "carpool"
-# Replace after `wrangler d1 create carpool`.
-database_id = "REPLACE_WITH_YOUR_D1_ID"
+# Created 2026-08-22 in region WNAM.
+database_id = "61938c9e-e221-4e43-b696-2b125b5679ab"
 
 [vars]
 # Firebase project that mints the ID tokens. Not a secret — it appears in the
