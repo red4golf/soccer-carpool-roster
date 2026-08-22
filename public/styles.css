@@ -129,3 +129,23 @@ html{scroll-padding-top:66px}body{padding-bottom:calc(72px + env(safe-area-inset
   display:flex;align-items:center}
 .manualCoords .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media(max-width:520px){.manualCoords .two{grid-template-columns:1fr}}
+
+/* --- profile: cars and roster claiming ------------------------------------ */
+
+.vehicleRow{display:grid;grid-template-columns:2fr 70px 2fr auto;gap:8px;align-items:center;
+  margin-bottom:8px}
+.vehicleRow input{min-height:46px;padding:8px 10px;border:1px solid var(--line);border-radius:10px}
+.claimList{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.claimList label{display:flex;align-items:center;gap:8px;min-height:46px;padding:0 14px;
+  border:1px solid var(--line);border-radius:999px;background:var(--paper);cursor:pointer}
+.claimList input{width:auto;margin:0}
+.claimList label:has(input:checked){border-color:var(--green);background:#eaf5ef;color:var(--green2);
+  font-weight:600}
+@media(max-width:620px){
+  .vehicleRow{grid-template-columns:1fr 1fr;
+    grid-template-areas:"name name" "seats notes" "remove remove"}
+  .vehicleRow input:nth-child(1){grid-area:name}
+  .vehicleRow input:nth-child(2){grid-area:seats}
+  .vehicleRow input:nth-child(3){grid-area:notes}
+  .vehicleRow button{grid-area:remove;justify-self:start}
+}

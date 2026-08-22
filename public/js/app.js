@@ -700,6 +700,18 @@ function openProfile() {
   const household = state.me.households.find(hh => hh.clubId === clubId);
   const areas = state.me.pickupAreas.filter(a => a.club_id === clubId);
   const user = state.me.user;
+  const claimable = state.me.claimablePlayers || [];
+
+  const vehicleRow = (vehicle = { name: '', seat_capacity: 3, notes: '' }) => `
+    <div class="vehicleRow">
+      <input data-vehicle-name placeholder="Blue Subaru Outback" maxlength="80"
+        value="${h(vehicle.name || '')}" aria-label="Car">
+      <input data-vehicle-seats type="number" min="1" max="8"
+        value="${vehicle.seat_capacity || 3}" aria-label="Seats">
+      <input data-vehicle-notes placeholder="Car seat, gear space" maxlength="200"
+        value="${h(vehicle.notes || '')}" aria-label="Notes">
+      <button type="button" class="textButton dangerText" data-remove-vehicle>Remove</button>
+    </div>`;
 
   const { host, close } = modal('My family', `
     <p class="privacyCallout">Your pickup area is visible to your team. Your exact address is released
@@ -730,11 +742,26 @@ function openProfile() {
       </details>
       <label>Alternate address (optional)<input name="alternateAddress"
         value="${h(household?.alternateAddress || '')}" placeholder="Grandparent, second home" maxlength="300"></label>
+      <fieldset class="childrenEditor"><legend>Our cars</legend>
+        <p class="childSubhead">Add a car and you can offer seats. Seats means
+          passenger seats normally free — you can lower it per trip.</p>
+        <div data-vehicle-rows>
+          ${(household?.vehicles || []).map(v => vehicleRow(v)).join('') || vehicleRow()}
+        </div>
+        <button type="button" class="outline small" data-add-vehicle>+ Add another car</button>
+      </fieldset>
+
       <fieldset class="childrenEditor"><legend>My children</legend>
         ${household?.children?.length
           ? `<div class="linkedChildren">${household.children.map(c => `<span>✓ ${h(c.name)}</span>`).join('')}</div>`
           : '<p>No children yet.</p>'}
-        <p class="childSubhead">Add a child</p>
+        ${claimable.length ? `
+          <p class="childSubhead">On the roster — which of these are yours?</p>
+          <div class="claimList">
+            ${claimable.map(c => `<label><input type="checkbox" name="claimPlayerIds"
+              value="${c.id}"><span>${h(c.name)}</span></label>`).join('')}
+          </div>` : ''}
+        <p class="childSubhead">${claimable.length ? 'Or add a child who is not listed' : 'Add a child'}</p>
         <div data-child-rows><div class="childRow"><input data-new-child placeholder="Child's full name" maxlength="120"></div></div>
         <button type="button" class="outline small" data-add-child>+ Add another child</button>
         <small class="privateNote">A coordinator adds children to a team roster; you cannot do that yourself.</small>
@@ -743,6 +770,15 @@ function openProfile() {
       <button class="primary submit">Save</button>
     </form>
     ${accessHistory()}`);
+
+  const vehicleRows = host.querySelector('[data-vehicle-rows]');
+  host.querySelector('[data-add-vehicle]').addEventListener('click', () =>
+    vehicleRows.insertAdjacentHTML('beforeend', vehicleRow()));
+  vehicleRows.addEventListener('click', event => {
+    if (!event.target.closest('[data-remove-vehicle]')) return;
+    event.target.closest('.vehicleRow').remove();
+    if (!vehicleRows.children.length) vehicleRows.insertAdjacentHTML('beforeend', vehicleRow());
+  });
 
   host.querySelector('[data-add-child]').addEventListener('click', () => {
     host.querySelector('[data-child-rows]').insertAdjacentHTML('beforeend',
@@ -764,6 +800,12 @@ function openProfile() {
         alternateAddress: data.get('alternateAddress'),
         homeLat: data.get('homeLat') || null,
         homeLng: data.get('homeLng') || null,
+        claimPlayerIds: data.getAll('claimPlayerIds').map(Number),
+        vehicles: [...vehicleRows.querySelectorAll('.vehicleRow')].map(row => ({
+          name: row.querySelector('[data-vehicle-name]').value.trim(),
+          seatCapacity: Number(row.querySelector('[data-vehicle-seats]').value) || 3,
+          notes: row.querySelector('[data-vehicle-notes]').value.trim(),
+        })).filter(v => v.name),
         newChildren: [...host.querySelectorAll('[data-new-child]')].map(i => i.value.trim()).filter(Boolean),
       });
       state.me = saved;
@@ -787,8 +829,10 @@ function openProfile() {
       }
 
       close();
+      const linked = saved.claimed?.length
+        ? ` Linked to the roster: ${saved.claimed.join(', ')}.` : '';
       const located = geo?.found ? ' Address located for route planning.' : '';
-      if (state.board) await refresh('Family profile saved.' + located);
+      if (state.board) await refresh('Family profile saved.' + linked + located);
       else await loadMe();
     } catch (error) {
       host.querySelector('#profileNotice').innerHTML = `<div class="notice error">${h(error.message)}</div>`;

@@ -127,6 +127,29 @@ export async function getMe({ db, user, scope }) {
       ).results
     : [];
 
+  // Players on the caller's teams that no family has claimed yet.
+  //
+  // A coordinator builds the roster; parents then sign up and say which
+  // children are theirs. Without this list those are two separate sets of
+  // `people` rows that never meet — the roster copy is enrolled but belongs
+  // to nobody, the parent's copy belongs to them but is on no roster, and
+  // "request a ride" refuses because the child is not on the team.
+  const claimablePlayers = scope.visibleTeamIds?.length
+    ? (
+        await db
+          .prepare(
+            `SELECT DISTINCT p.id, p.name, e.team_id
+               FROM people p
+               JOIN enrollments e ON e.person_id = p.id
+              WHERE p.household_id IS NULL
+                AND e.team_id IN (${scope.visibleTeamIds.map(() => '?').join(',')})
+              ORDER BY p.name`,
+          )
+          .bind(...scope.visibleTeamIds)
+          .all()
+      ).results
+    : [];
+
   const pickupAreas = clubIds.length
     ? (
         await db
@@ -187,6 +210,7 @@ export async function getMe({ db, user, scope }) {
       poolingEnabled: Boolean(t.allow_cross_team_pools),
     })),
     households,
+    claimablePlayers,
     pickupAreas,
     addressAccessLog: logs,
     pending: scope.isPending,
@@ -280,17 +304,86 @@ export async function updateProfile({ db, env, user, scope, body, ip }) {
     });
   }
 
-  // Children the parent adds themselves. Enrolment onto a team stays an
+  // Claiming a rostered player: "that one is mine".
+  //
+  // Only ever an UNCLAIMED player on a team the caller belongs to, so this
+  // cannot be used to attach yourself to another family's child or to reach
+  // into a team you are not on.
+  const claimed = [];
+  if (Array.isArray(body.claimPlayerIds) && scope.visibleTeamIds?.length) {
+    const teamList = scope.visibleTeamIds.map(() => '?').join(',');
+    for (const raw of body.claimPlayerIds.slice(0, 20)) {
+      const personId = integer(raw, { field: 'Player', required: false });
+      if (personId == null) continue;
+      const person = await db
+        .prepare(
+          `SELECT p.id, p.name FROM people p
+             JOIN enrollments e ON e.person_id = p.id
+            WHERE p.id = ? AND p.club_id = ? AND p.household_id IS NULL
+              AND e.team_id IN (${teamList}) LIMIT 1`,
+        )
+        .bind(personId, clubId, ...scope.visibleTeamIds)
+        .first();
+      if (!person) continue;
+      await db
+        .prepare(`UPDATE people SET household_id = ? WHERE id = ? AND household_id IS NULL`)
+        .bind(household.id, personId)
+        .run();
+      claimed.push(person.name);
+      await audit(db, {
+        clubId, actor: user, action: 'player_claimed',
+        subjectType: 'person', subjectId: personId,
+        reason: `${person.name} linked to their family`, ip,
+      });
+    }
+  }
+
+  // Children the parent types in themselves. Enrolment onto a team stays an
   // admin action — a parent must not be able to add a child to a roster.
+  //
+  // If the name matches a player already on one of their teams and unclaimed,
+  // link to that record instead of creating a second one. Two rows for one
+  // child is how a family ends up unable to request the ride they can see.
   if (Array.isArray(body.newChildren)) {
+    const teamList = scope.visibleTeamIds?.length
+      ? scope.visibleTeamIds.map(() => '?').join(',')
+      : null;
+
     for (const raw of body.newChildren.slice(0, 10)) {
       const name = text(raw, { field: 'Child name', max: 120 });
       if (!name) continue;
+
       const duplicate = await db
         .prepare(`SELECT id FROM people WHERE household_id = ? AND lower(name) = lower(?)`)
         .bind(household.id, name)
         .first();
       if (duplicate) continue;
+
+      if (teamList) {
+        const rostered = await db
+          .prepare(
+            `SELECT p.id, p.name FROM people p
+               JOIN enrollments e ON e.person_id = p.id
+              WHERE p.club_id = ? AND lower(p.name) = lower(?) AND p.household_id IS NULL
+                AND e.team_id IN (${teamList}) LIMIT 1`,
+          )
+          .bind(clubId, name, ...scope.visibleTeamIds)
+          .first();
+        if (rostered) {
+          await db
+            .prepare(`UPDATE people SET household_id = ? WHERE id = ? AND household_id IS NULL`)
+            .bind(household.id, rostered.id)
+            .run();
+          claimed.push(rostered.name);
+          await audit(db, {
+            clubId, actor: user, action: 'player_claimed',
+            subjectType: 'person', subjectId: rostered.id,
+            reason: `${rostered.name} matched by name and linked`, ip,
+          });
+          continue;
+        }
+      }
+
       await db
         .prepare(`INSERT INTO people (club_id, household_id, name) VALUES (?,?,?)`)
         .bind(clubId, household.id, name)
@@ -328,6 +421,7 @@ export async function updateProfile({ db, env, user, scope, body, ip }) {
   // is shown for confirmation rather than quietly treated as fact.
   return {
     ...me,
+    claimed,
     geocode: geo
       ? { found: true, label: geo.label, confidence: geo.confidence }
       : addressChanged && home.lat == null
