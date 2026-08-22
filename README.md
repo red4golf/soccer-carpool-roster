@@ -1,42 +1,98 @@
-# Soccer Carpool Roster
+# Soccer Carpool
 
-A mobile-friendly, shared carpool board for soccer games and practices. This GitHub Pages frontend uses Google or verified email-and-password sign-in and connects to the hosted roster service so approved families see the same live data. Firebase stores passwords and provides password-reset emails; the roster never receives them.
+A shared carpool board for club soccer — offer seats, request rides, and see
+who is riding with whom. Built for a whole club rather than a single team, and
+designed so children's home addresses stay private by default.
 
-## Family workflow
+Runs free: Cloudflare Workers + D1 + GitHub Pages, with Firebase for sign-in.
 
-- Parents maintain a profile with a general pickup area, private home/alternate addresses, and every child who may need transportation. Existing unassigned roster players can be connected without creating duplicates.
-- Approved families can see general pickup areas, offer seats, and request rides.
-- Eligible drivers use **Add to my car**; the service verifies ownership, trip direction, and remaining capacity.
-- Only the assigned driver can reveal an exact private pickup address. Each reveal and route opening is logged.
-- A parent can request the same trip for one or several children at once. Each child consumes one seat and remains independently assignable.
-- Households can save additional adult drivers and multiple vehicles. Either parent may select the actual driver and vehicle when offering seats.
-- Approved parents land on a private **My rides** summary with upcoming child rides and household driving commitments.
-- Pending accounts can complete their own profile but cannot retrieve the team player directory or connect themselves to an existing player.
-- Parents can cancel their own requests, and drivers can remove riders or cancel empty driving offers.
-- Administrators can review and correct parent-to-player connections, including linking two approved parents to the same child.
+```
+public/   installable web app (GitHub Pages)
+worker/   API, database schema, route optimizer (Cloudflare Workers + D1)
+docs/     design notes
+```
 
-Common locations such as schools and parks remain visible through Google Maps links. Private addresses are sent to Google Maps only when an assigned driver opens pickup details or a route.
+## What it does
 
-## Administration
+**For parents.** Request a ride for one child or several. Offer seats from any
+household vehicle. Add a teammate to your car. Everything works on a phone and
+installs to the home screen.
 
-The existing separate administrator password remains in place. Admin tools provide:
+**For coordinators.** Manage the schedule and roster, approve parents, and hit
+**Suggest carpools** to get a proposed driver-to-child assignment with routes
+already in the shortest order. Nothing is saved until you accept it.
 
-- Manual entry, editing, removal, and CSV import for events, players, drivers, locations, and pickup areas
-- Parent approval and access pausing
-- Ride-assignment review and override
-- Logged private-address review
-- Plaintext JSON backup export
+**For a club.** Many teams, isolated from each other by default, with an
+opt-in way to share cars between two teams at the same venue.
 
-Backup files include private addresses and should be stored in a secure location with restricted access. Recovery currently requires a controlled service/database restore; there is no browser-based restore button.
+## Privacy
 
-CSV headers:
+The core design constraint: **a home address is released only to the driver
+actually carrying that child, and the family is told every time.**
 
-- Schedule: `type,title,date,start_time,location,notes`
-- Players: `player,guardian,phone`
-- Drivers: `driver,phone,capacity,notes`
-- Locations: `name,map_url`
-- Pickup areas: `name`
+- Everyone sees a coarse pickup area ("Winslow"). Nobody browses addresses.
+- Exact addresses come from two endpoints only, both of which require either an
+  active assignment or a club admin with a typed reason. Both are logged.
+- The route planner needs coordinates; the coordinator reading its output does
+  not, so geometry never leaves the server. A test asserts no address or
+  coordinate appears in a plan response.
+- Families see their own access history in their profile, unprompted.
+- The service worker caches the app shell but **never** API responses — roster
+  data is not written to disk on the device.
 
-## Live site
+## Multi-team
 
-https://red4golf.github.io/soccer-carpool-roster/
+A child belongs to a *household*, not a team, which is what makes siblings on
+different teams work naturally. Access is a single primitive: a `membership`
+row. No row, no data — and out-of-scope reads return `404`, never `403`, so
+team ids cannot be enumerated.
+
+Cross-team carpooling is off by default and needs three separate consents to
+turn on. What crosses the line is a first name and a pickup area — nothing
+else. See [docs/TENANCY.md](docs/TENANCY.md).
+
+## Route optimization
+
+Exact Held-Karp for a single car (verified against brute force), regret-2
+insertion plus local search for assigning children to drivers (verified against
+exhaustive enumeration). Distance is pluggable: free straight-line geometry by
+default, real road routing if you add an OpenRouteService key.
+
+See [docs/ROUTING.md](docs/ROUTING.md).
+
+## Getting started
+
+```bash
+cd worker && npm install && npm run db:local && npm run db:seed && npm run dev
+```
+
+Full instructions, costs, and deployment in [docs/DEPLOY.md](docs/DEPLOY.md).
+
+## Tests
+
+```bash
+cd worker && node --test test/*.test.js
+```
+
+53 tests with no third-party dependencies. Isolation is tested adversarially —
+each case is an *attempt* to read another team's data, and passing means the
+attempt failed.
+
+## Notable changes from the single-team version
+
+- One front door. The shared admin password is gone; admin rights are a
+  revocable, per-person membership row, so the audit log can name who revealed
+  an address.
+- Map URLs are scheme-checked. `<input type="url">` accepts
+  `javascript:alert(1)` in Chrome, so admin-supplied links were a stored-XSS
+  vector when rendered into an `href`.
+- ID tokens are fetched per request. The old client cached one for the session,
+  so a phone left open on the touchline started failing after an hour.
+- Response status is checked before parsing. A 502 HTML page used to surface as
+  `Unexpected token '<'` and log the parent out.
+- Dates are validated. `new Date('9/8/2026T12:00:00')` is `Invalid Date`, which
+  previously made an event silently disappear from the board.
+- Seat capacity is enforced by a conditional `INSERT`, so two parents tapping
+  "add to my car" at the same moment cannot both take the last seat.
+- Google sign-in falls back to redirect when popups are blocked — the norm in
+  the in-app browsers parents open links from.

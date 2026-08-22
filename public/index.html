@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="description" content="Shared carpool board for club soccer games and practices.">
+  <meta name="theme-color" content="#0d3034">
+  <meta name="color-scheme" content="light">
+  <title>Soccer Carpool</title>
+
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Carpool">
+
+  <!-- Firebase Auth is the only third-party origin this page talks to.
+       Everything else is same-origin or the club's own API. -->
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skipLink" href="#my-rides">Skip to my rides</a>
+  <div id="app"><noscript>This carpool board needs JavaScript enabled.</noscript></div>
+
+  <script>
+    // Runtime configuration. Deliberately inline and readable: none of this is
+    // secret. A Firebase apiKey identifies the project, it does not authorise
+    // anything — access is decided by the API's token check and the club
+    // membership rows behind it.
+    window.CARPOOL_CONFIG = {
+      apiBase: location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+        ? 'http://localhost:8787'
+        : 'https://soccer-carpool.red4golf.workers.dev',
+      firebase: {
+        apiKey: 'AIzaSyAnzyxw5whft5kgeZKs1P3NCf-8QlSK-T8',
+        authDomain: 'soccer-rideshare.firebaseapp.com',
+        projectId: 'soccer-rideshare',
+        storageBucket: 'soccer-rideshare.firebasestorage.app',
+        messagingSenderId: '704817990804',
+        appId: '1:704817990804:web:59c66c9285397a59883881'
+      }
+    };
+  </script>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

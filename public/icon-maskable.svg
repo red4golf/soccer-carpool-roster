@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Soccer Carpool">
+  <rect width="512" height="512" rx="0" fill="#0d3034"/>
+  <circle cx="256" cy="212" r="86" fill="#f5f2e9"/>
+  <path d="M256 150l30 22-11 35h-38l-11-35z" fill="#0d3034"/>
+  <path d="M256 298c-24 0-46-8-63-22l14-30 34 12 34-12 14 30c-17 14-39 22-33 22z" fill="#0d3034" opacity=".85"/>
+  <rect x="118" y="330" width="276" height="76" rx="26" fill="#178f58"/>
+  <circle cx="176" cy="412" r="26" fill="#f5f2e9"/>
+  <circle cx="336" cy="412" r="26" fill="#f5f2e9"/>
+  <rect x="150" y="348" width="90" height="40" rx="12" fill="#0d3034" opacity=".35"/>
+  <rect x="272" y="348" width="90" height="40" rx="12" fill="#0d3034" opacity=".35"/>
+</svg>
