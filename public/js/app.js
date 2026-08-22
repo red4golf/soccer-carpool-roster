@@ -55,13 +55,13 @@ async function loadMe() {
   try {
     renderLoading();
     state.me = await get('/api/me');
-    const active = state.me.memberships.filter(m => m.status === 'active');
-    state.membership =
-      active.find(m => m.teamId === Number(localStorage.getItem('carpool.team'))) ||
-      active.find(m => m.teamId) ||
-      active[0] ||
-      null;
-    if (state.me.pending || !state.membership) {
+    // Openable teams come from the server, not from membership rows: a club
+    // admin's membership names no team at all, so deriving the list here
+    // would strand them on the approval screen.
+    const teams = state.me.teams || [];
+    const remembered = Number(localStorage.getItem('carpool.team'));
+    state.membership = teams.find(t => t.teamId === remembered) || teams[0] || null;
+    if (!state.membership) {
       renderPending();
       return;
     }
@@ -220,7 +220,7 @@ function render() {
 
   const upcoming = board.events.filter(isUpcoming);
   const event = board.event;
-  const activeMemberships = me.memberships.filter(m => m.status === 'active' && m.teamId);
+  const openableTeams = me.teams || [];
   const canCoordinate = ['team_admin', 'club_admin'].includes(membership.role);
 
   const needSeats = board.requests.filter(r => !r.offerTo && !r.offerFrom).length;
@@ -231,7 +231,7 @@ function render() {
       <a class="brand" href="#my-rides"><span class="brandMark">SC</span>
         <span><b>${h(membership.clubName)}</b><small>${h(membership.teamName || 'Team ride board')}</small></span></a>
       <div class="topActions">
-        ${activeMemberships.length > 1 ? teamSwitcher(activeMemberships) : ''}
+        ${openableTeams.length > 1 ? teamSwitcher(openableTeams) : ''}
         <button class="outline small" data-profile>My family</button>
         ${canCoordinate ? '<button class="outline small" data-coordinate>Coordinate</button>' : ''}
         <button class="outline small" data-signout>Sign out</button>
@@ -266,11 +266,11 @@ function render() {
   bind();
 }
 
-const teamSwitcher = memberships => `
+const teamSwitcher = teams => `
   <label class="teamSwitcher">
     <span class="visuallyHidden">Team</span>
     <select data-team>
-      ${memberships.map(m => `
+      ${teams.map(m => `
         <option value="${m.teamId}" ${m.teamId === state.membership.teamId ? 'selected' : ''}>
           ${h(m.clubName)} · ${h(m.teamName)}
         </option>`).join('')}
@@ -473,7 +473,7 @@ function bind() {
 
   root.querySelector('[data-team]')?.addEventListener('change', async event => {
     const teamId = Number(event.target.value);
-    state.membership = state.me.memberships.find(m => m.teamId === teamId);
+    state.membership = (state.me.teams || []).find(t => t.teamId === teamId) || state.membership;
     localStorage.setItem('carpool.team', String(teamId));
     await guard(() => loadBoard());
   });

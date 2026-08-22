@@ -97,6 +97,31 @@ export async function getMe({ db, user, scope }) {
     });
   }
 
+  // Teams the caller can actually open.
+  //
+  // This is NOT derivable from membership rows on the client: a club_admin
+  // holds a single row with team_id NULL, which says "every team in this
+  // club" without naming one. Deriving the list client-side stranded club
+  // admins on the approval screen because they appeared to belong to no team.
+  // The server already resolves this in scope.visibleTeamIds, so it is the
+  // server's job to answer it.
+  const teams = scope.visibleTeamIds?.length
+    ? (
+        await db
+          .prepare(
+            `SELECT t.id, t.club_id, t.name, t.season, c.name AS club_name,
+                    c.allow_cross_team_pools
+               FROM teams t
+               JOIN clubs c ON c.id = t.club_id
+              WHERE t.id IN (${scope.visibleTeamIds.map(() => '?').join(',')})
+                AND t.archived = 0
+              ORDER BY c.name, t.name`,
+          )
+          .bind(...scope.visibleTeamIds)
+          .all()
+      ).results
+    : [];
+
   const pickupAreas = clubIds.length
     ? (
         await db
@@ -144,6 +169,17 @@ export async function getMe({ db, user, scope }) {
       role: r.role,
       status: r.status,
       poolingEnabled: Boolean(r.allow_cross_team_pools),
+    })),
+    // Each entry carries the caller's EFFECTIVE role on that team, which for
+    // a club admin comes from their club-wide row rather than a team one.
+    teams: teams.map(t => ({
+      teamId: t.id,
+      teamName: t.name,
+      season: t.season,
+      clubId: t.club_id,
+      clubName: t.club_name,
+      role: scope.roleOnTeam(t.id, t.club_id),
+      poolingEnabled: Boolean(t.allow_cross_team_pools),
     })),
     households,
     pickupAreas,

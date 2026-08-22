@@ -60,7 +60,32 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Static assets: cache first, refresh in the background.
+  // Application code (JS/CSS): network first, cache only as an offline
+  // fallback.
+  //
+  // Cache-first is wrong here. It served a stale app.js for a full load after
+  // a deploy — caught in testing, where the UI kept rendering the previous
+  // build against an already-updated API. A parent would have run last week's
+  // code until they happened to open the app twice. Freshness of the app
+  // itself is worth one network round trip; offline still works because we
+  // fall back to the cached copy.
+  const isAppCode = /\.(?:js|css)$/.test(url.pathname) && url.origin === self.location.origin;
+  if (isAppCode) {
+    event.respondWith(
+      fetch(request)
+        .then(response => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(VERSION).then(cache => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request)),
+    );
+    return;
+  }
+
+  // Everything else (icons, manifest, fonts): cache first, refresh behind.
   event.respondWith(
     caches.match(request).then(hit => {
       const network = fetch(request)

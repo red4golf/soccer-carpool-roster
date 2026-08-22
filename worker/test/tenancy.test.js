@@ -296,3 +296,47 @@ test('every tenant table carries club_id so a query cannot forget its scope', ()
     assert.ok(columns.includes('club_id'), `${table} is missing club_id`);
   }
 });
+
+// --- what the client is told ----------------------------------------------
+
+test('a club admin is told which teams they can open', async () => {
+  // Regression: a club_admin holds ONE membership row with team_id NULL. The
+  // client used to derive its team list from membership rows, found none, and
+  // showed the "waiting for approval" screen to the club's administrator.
+  // The team list has to come from the server, which alone can expand a
+  // club-wide role into concrete teams.
+  const f = seedTwoClubs();
+  const { getMe } = await import('../src/routes/me.js');
+  const user = f.userRow(f.users.riversideAdmin);
+  const scope = await loadScope(f.db, user);
+
+  const me = await getMe({ db: f.db, user, scope });
+
+  assert.equal(me.memberships.length, 1);
+  assert.equal(me.memberships[0].teamId, null, 'the club-wide row names no team');
+
+  const teamIds = me.teams.map(t => t.teamId).sort();
+  assert.deepEqual(teamIds, [f.teams.red, f.teams.gold].sort());
+  assert.ok(me.teams.every(t => t.role === 'club_admin'), 'effective role resolves through the club');
+  assert.ok(me.teams.every(t => t.clubId === f.clubs.riverside));
+  // And never the other club.
+  assert.ok(!me.teams.some(t => t.teamId === f.teams.blue));
+});
+
+test('a parent is told only their own team', async () => {
+  const f = seedTwoClubs();
+  const { getMe } = await import('../src/routes/me.js');
+  const user = f.userRow(f.users.redParent);
+  const me = await getMe({ db: f.db, user, scope: await loadScope(f.db, user) });
+  assert.deepEqual(me.teams.map(t => t.teamId), [f.teams.red]);
+  assert.equal(me.teams[0].role, 'parent');
+});
+
+test('a pending user is told about no teams at all', async () => {
+  const f = seedTwoClubs();
+  const { getMe } = await import('../src/routes/me.js');
+  const user = f.userRow(f.users.pendingParent);
+  const me = await getMe({ db: f.db, user, scope: await loadScope(f.db, user) });
+  assert.deepEqual(me.teams, []);
+  assert.equal(me.pending, true);
+});
