@@ -57,24 +57,36 @@ export async function openCoordinator(context) {
     render();
   }
 
-  const TABS = [
-    ['schedule', 'Schedule'],
-    ['roster', 'Roster'],
-    ['people', 'People'],
-    ['carpools', 'Carpools'],
-    ['places', 'Places'],
-    ['teams', 'Teams'],
-    ['club', 'Club'],
-  ];
+  /**
+   * Tabs the caller can actually use.
+   *
+   * A team coordinator has no business in club settings, and showing them a
+   * tab that only ever says "you cannot do this" is worse than not showing
+   * it — it reads as something broken rather than something withheld. The
+   * server decides via canManageClub; this only reflects that decision.
+   */
+  const tabsFor = data => {
+    const tabs = [
+      ['schedule', 'Schedule'],
+      ['roster', 'Roster'],
+      ['people', 'People'],
+      ['carpools', 'Carpools'],
+      ['places', 'Places'],
+    ];
+    if (data?.canManageClub) tabs.push(['teams', 'Teams'], ['club', 'Club']);
+    return tabs;
+  };
 
   function render() {
     const data = view.data;
     if (!data) return;
+    const visible = tabsFor(data).map(([key]) => key);
+    if (!visible.includes(view.tab)) view.tab = visible[0];
 
     const pending = data.counts.pendingMembers;
     body.innerHTML = `
       <div class="coordTabs" role="tablist">
-        ${TABS.map(([key, label]) => `
+        ${tabsFor(data).map(([key, label]) => `
           <button role="tab" aria-selected="${view.tab === key}"
                   class="${view.tab === key ? 'active' : ''}" data-tab="${key}">
             ${label}${key === 'people' && pending ? ` <span class="badgeCount">${pending}</span>` : ''}
@@ -305,6 +317,16 @@ export async function openCoordinator(context) {
         <label>Area name<input name="name" required maxlength="80" placeholder="Winslow"></label>
         <button class="primary submit">Add area</button>
       </form>
+      <div class="coordForm">
+        <h3>Locate family addresses</h3>
+        <p class="muted">Route planning needs coordinates. Families are located
+          automatically when they save an address; this catches any that were added
+          before, or whose lookup failed. Sends only the address, from the server,
+          about one per second. Every run is logged.</p>
+        <button class="outline" data-geocode>Locate addresses</button>
+        <div data-geocode-result></div>
+      </div>
+
       ${pickupAreas.length ? `<ul class="coordList compact">
         ${pickupAreas.map(a => `<li><div><b>${h(a.name)}</b></div>
           <button class="dangerText" data-delete-area="${a.id}">Delete</button></li>`).join('')}
@@ -480,6 +502,25 @@ export async function openCoordinator(context) {
       event.preventDefault();
       act({ action: 'create_club', name: formData(event.target).name },
         'Club created. Switch to it from the team menu once it has a team.');
+    });
+
+    body.querySelector('[data-geocode]')?.addEventListener('click', async event => {
+      const button = event.currentTarget;
+      const slot = body.querySelector('[data-geocode-result]');
+      button.disabled = true;
+      slot.innerHTML = '<p class="muted">Looking up addresses…</p>';
+      try {
+        const result = await post('/api/admin', {
+          action: 'geocode_households', clubId: context.team.clubId,
+        });
+        slot.innerHTML = result.processed === 0
+          ? notice('Every family with an address is already located.')
+          : notice(`Located ${result.located} of ${result.processed}.` +
+              (result.remaining ? ` ${result.remaining} still to do — run it again.` : ''));
+      } catch (error) {
+        slot.innerHTML = notice(error.message, 'error');
+      }
+      button.disabled = false;
     });
 
     body.querySelector('[data-suggest]')?.addEventListener('click', async () => {

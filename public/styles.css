@@ -119,3 +119,13 @@ html{scroll-padding-top:66px}body{padding-bottom:calc(72px + env(safe-area-inset
   .coordTabs{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
   .coordTabs button{flex:0 0 auto}
 }
+
+/* --- geocoding ------------------------------------------------------------ */
+
+.geoConfirmed{margin:-6px 0 12px;padding:10px 12px;border-radius:10px;background:#f2f7f4;
+  color:var(--green2);font-size:13px;line-height:1.5}
+.manualCoords{margin:-4px 0 14px}
+.manualCoords summary{cursor:pointer;color:var(--muted);font-size:13px;min-height:44px;
+  display:flex;align-items:center}
+.manualCoords .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:520px){.manualCoords .two{grid-template-columns:1fr}}

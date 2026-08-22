@@ -713,6 +713,21 @@ function openProfile() {
       </select></label>
       <label>Home address<input name="homeAddress" value="${h(household?.homeAddress || '')}"
         placeholder="Street, city, state, ZIP" maxlength="300"></label>
+      <small class="privateNote">To plan pickup routes we look this address up on
+        OpenStreetMap once, from our server. Only the address is sent — never your
+        name, your children's names, or your team. You can skip it and type
+        coordinates yourself below; without either, route planning will leave your
+        family out rather than guess.</small>
+      ${household?.homeGeocoded ? `<div class="geoConfirmed">📍 Located${household.homeGeocodeLabel
+        ? ` at <b>${h(household.homeGeocodeLabel)}</b>` : ''}</div>` : ''}
+      <details class="manualCoords"><summary>Enter coordinates manually</summary>
+        <div class="two">
+          <label>Latitude<input name="homeLat" type="number" step="any"
+            value="${household?.homeLat ?? ''}" placeholder="47.6249"></label>
+          <label>Longitude<input name="homeLng" type="number" step="any"
+            value="${household?.homeLng ?? ''}" placeholder="-122.5188"></label>
+        </div>
+      </details>
       <label>Alternate address (optional)<input name="alternateAddress"
         value="${h(household?.alternateAddress || '')}" placeholder="Grandparent, second home" maxlength="300"></label>
       <fieldset class="childrenEditor"><legend>My children</legend>
@@ -740,17 +755,40 @@ function openProfile() {
     const button = submitEvent.target.querySelector('.submit');
     button.disabled = true;
     try {
-      state.me = await post('/api/me', {
+      const saved = await post('/api/me', {
         clubId,
         displayName: data.get('displayName'),
         phone: data.get('phone'),
         pickupAreaId: data.get('pickupAreaId') || null,
         homeAddress: data.get('homeAddress'),
         alternateAddress: data.get('alternateAddress'),
+        homeLat: data.get('homeLat') || null,
+        homeLng: data.get('homeLng') || null,
         newChildren: [...host.querySelectorAll('[data-new-child]')].map(i => i.value.trim()).filter(Boolean),
       });
+      state.me = saved;
+
+      // A vague match is worse than none: a pin on the middle of town sends a
+      // driver to the wrong place while looking perfectly correct. Stay open
+      // and ask, rather than closing on a quiet maybe.
+      const geo = saved.geocode;
+      if (geo && (geo.found === false || geo.confidence === 'area' || geo.confidence === 'approximate')) {
+        host.querySelector('#profileNotice').innerHTML = geo.found
+          ? `<div class="notice error">We could only place that address roughly —
+               we matched <b>${h(geo.label)}</b>. If that is not your street, add more
+               detail (or open <b>Enter coordinates manually</b>), then save again.
+               Your details are already saved.</div>`
+          : `<div class="notice error">We could not find that address on the map.
+               Your details are saved, but route planning will skip your family until
+               it can be located. Try adding the city and ZIP, or enter coordinates
+               manually.</div>`;
+        button.disabled = false;
+        return;
+      }
+
       close();
-      if (state.board) await refresh('Family profile saved.');
+      const located = geo?.found ? ' Address located for route planning.' : '';
+      if (state.board) await refresh('Family profile saved.' + located);
       else await loadMe();
     } catch (error) {
       host.querySelector('#profileNotice').innerHTML = `<div class="notice error">${h(error.message)}</div>`;

@@ -287,3 +287,96 @@ test('the overview narrows to the club that was asked about', async () => {
   );
   assert.deepEqual(harbor.teams.map(t => t.name).sort(), ['Blue', 'Green']);
 });
+
+// --- role masking is cosmetic; the API is the real gate --------------------
+
+test('a parent is refused every coordinator action, not merely shown no button', async () => {
+  // Hiding the Coordinate button stops an honest parent wandering in. It does
+  // nothing about someone who opens devtools, so every action is checked
+  // server-side too. This walks the whole action table as a parent.
+  const f = seedTwoClubs();
+  const actions = [
+    { action: 'invite_members', teamId: f.teams.red, emails: 'x@example.com' },
+    { action: 'revoke_invite', inviteId: 1 },
+    { action: 'upsert_event', teamId: f.teams.red, title: 'Sneaky', eventDate: '2026-09-12', startTime: '09:00' },
+    { action: 'upsert_location', clubId: f.clubs.riverside, name: 'Sneaky Park' },
+    { action: 'upsert_pickup_area', clubId: f.clubs.riverside, name: 'Sneaky' },
+    { action: 'create_person', teamId: f.teams.red, name: 'Ghost Player' },
+    { action: 'unenroll_child', teamId: f.teams.red, personId: 1 },
+    { action: 'enroll_child', teamId: f.teams.red, personId: 1 },
+    { action: 'create_team', clubId: f.clubs.riverside, name: 'Sneaky Team' },
+    { action: 'update_team', teamId: f.teams.red, name: 'Renamed' },
+    { action: 'create_club', name: 'Sneaky FC' },
+    { action: 'update_club', clubId: f.clubs.riverside, name: 'Renamed FC' },
+    { action: 'approve_member', membershipId: 1, status: 'active' },
+    { action: 'set_member_role', membershipId: 1, role: 'team_admin' },
+    { action: 'delete_record', kind: 'event', id: 1 },
+    { action: 'reveal_address', householdId: 1, reason: 'curiosity' },
+    { action: 'create_pool', clubId: f.clubs.riverside, locationId: 1, poolDate: '2026-09-12' },
+    { action: 'join_pool', teamId: f.teams.red, poolId: 1 },
+    { action: 'leave_pool', teamId: f.teams.red, poolId: 1 },
+    { action: 'export_backup', clubId: f.clubs.riverside },
+  ];
+
+  for (const payload of actions) {
+    await assert.rejects(
+      admin(f, f.users.redParent, payload),
+      error => error.status === 404 || error.status === 403,
+      `parent was not refused: ${payload.action}`,
+    );
+  }
+
+  // And nothing leaked through as a side effect.
+  assert.equal(f.db.rows(`SELECT COUNT(*) n FROM invitations`)[0].n, 0);
+  assert.equal(f.db.rows(`SELECT COUNT(*) n FROM events`)[0].n, 0);
+  assert.equal(f.db.rows(`SELECT COUNT(*) n FROM clubs`)[0].n, 2);
+  assert.equal(f.db.rows(`SELECT name FROM teams WHERE id = ?`, f.teams.red)[0].name, 'Red');
+});
+
+test('a coach is refused coordinator actions but may still read the roster', async () => {
+  const f = seedTwoClubs();
+  await assert.rejects(
+    admin(f, f.users.coach, { action: 'upsert_event', teamId: f.teams.red, title: 'x',
+      eventDate: '2026-09-12', startTime: '09:00' }),
+    e => e.status === 404,
+  );
+  const scope = await loadScope(f.db, f.userRow(f.users.coach));
+  assert.equal(scope.can('view_roster', { teamId: f.teams.red, clubId: f.clubs.riverside }), true);
+  assert.equal(scope.can('manage_events', { teamId: f.teams.red, clubId: f.clubs.riverside }), false);
+});
+
+test('a team coordinator cannot reach club-level settings', async () => {
+  const f = seedTwoClubs();
+  const teamAdmin = f.db.insert(
+    `INSERT INTO users (firebase_uid, email, email_verified, display_name)
+     VALUES ('uid-ta','ta@example.com',1,'Team Coordinator')`,
+  );
+  f.db.insert(
+    `INSERT INTO memberships (club_id, team_id, user_id, role, status) VALUES (?,?,?,'team_admin','active')`,
+    f.clubs.riverside, f.teams.red, teamAdmin,
+  );
+
+  // Can run their own team...
+  const ok = await admin(f, teamAdmin, {
+    action: 'upsert_event', teamId: f.teams.red, title: 'Practice',
+    eventDate: '2026-09-15', startTime: '17:15',
+  });
+  assert.equal(ok.ok, true);
+
+  // ...but not the club, and not a sibling team.
+  for (const payload of [
+    { action: 'create_team', clubId: f.clubs.riverside, name: 'New Team' },
+    { action: 'update_club', clubId: f.clubs.riverside, name: 'Renamed' },
+    { action: 'export_backup', clubId: f.clubs.riverside },
+    { action: 'reveal_address', householdId: 1, reason: 'because' },
+    { action: 'upsert_event', teamId: f.teams.gold, title: 'x', eventDate: '2026-09-12', startTime: '09:00' },
+  ]) {
+    await assert.rejects(admin(f, teamAdmin, payload), e => e.status === 404,
+      `team coordinator was not refused: ${payload.action}`);
+  }
+
+  // The overview reflects that, so the UI can hide what it cannot use.
+  const overview = await adminRequest(await ctx(f, teamAdmin, {}, 'GET', ''));
+  assert.equal(overview.canManageClub, false);
+  assert.equal(overview.isPlatformAdmin, false);
+});

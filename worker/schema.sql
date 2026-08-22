@@ -107,9 +107,13 @@ CREATE TABLE households (
   home_address       TEXT NOT NULL DEFAULT '',
   home_lat           REAL,
   home_lng           REAL,
+  home_geocode_label       TEXT NOT NULL DEFAULT '',
+  home_geocode_confidence  TEXT NOT NULL DEFAULT '',
   alternate_address  TEXT NOT NULL DEFAULT '',
   alternate_lat      REAL,
   alternate_lng      REAL,
+  alternate_geocode_label      TEXT NOT NULL DEFAULT '',
+  alternate_geocode_confidence TEXT NOT NULL DEFAULT '',
   geocoded_at        TEXT,
 
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))

@@ -80,7 +80,7 @@ Full instructions, costs, and deployment in [docs/DEPLOY.md](docs/DEPLOY.md).
 cd worker && node --test test/*.test.js
 ```
 
-76 tests with no third-party dependencies. Isolation is tested adversarially —
+93 tests with no third-party dependencies. Isolation is tested adversarially —
 each case is an *attempt* to read another team's data, and passing means the
 attempt failed.
 

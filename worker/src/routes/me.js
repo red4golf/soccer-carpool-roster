@@ -1,5 +1,6 @@
 import { HttpError, audit } from '../lib/scope.js';
 import { coordinate, integer, phone, text } from '../lib/validate.js';
+import { geocoderFor } from '../lib/geocode.js';
 
 /** The household this user belongs to within a given club, if any. */
 export async function householdFor(db, userId, clubId) {
@@ -86,6 +87,10 @@ export async function getMe({ db, user, scope }) {
       pickupAreaId: household.pickup_area_id,
       homeAddress: household.home_address,
       homeGeocoded: household.home_lat != null,
+      homeGeocodeLabel: household.home_geocode_label || '',
+      homeGeocodeConfidence: household.home_geocode_confidence || '',
+      homeLat: household.home_lat,
+      homeLng: household.home_lng,
       alternateAddress: household.alternate_address,
       children: (children.results ?? children).map(c => ({
         id: c.id,
@@ -189,7 +194,7 @@ export async function getMe({ db, user, scope }) {
 }
 
 /** Update the caller's own profile and household. Never touches anyone else. */
-export async function updateProfile({ db, user, scope, body, ip }) {
+export async function updateProfile({ db, env, user, scope, body, ip }) {
   const clubId = integer(body.clubId, { field: 'clubId' });
   if (!scope.clubIds.includes(clubId) && !scope.all.some(m => m.club_id === clubId)) {
     // A pending member may still complete their profile for the club that
@@ -223,10 +228,26 @@ export async function updateProfile({ db, user, scope, body, ip }) {
 
   const addressChanged = homeAddress && homeAddress !== household.home_address;
 
+  // Resolve the address to coordinates so the route planner can include this
+  // family. Skipped entirely when the parent supplied coordinates themselves,
+  // and when the address has not changed there is nothing new to look up.
+  //
+  // A failed lookup is not an error: the family is saved without coordinates
+  // and the planner reports them under `needsAddress`. Refusing the save
+  // would make a third-party service a hard dependency of joining a team.
+  let geo = null;
+  if (home.lat == null && addressChanged) {
+    geo = await geocoderFor(env)(homeAddress);
+  }
+
+  const homeLat = home.lat ?? geo?.lat ?? (addressChanged ? null : household.home_lat);
+  const homeLng = home.lng ?? geo?.lng ?? (addressChanged ? null : household.home_lng);
+
   await db
     .prepare(
       `UPDATE households
           SET pickup_area_id = ?, home_address = ?, home_lat = ?, home_lng = ?,
+              home_geocode_label = ?, home_geocode_confidence = ?,
               alternate_address = ?, alternate_lat = ?, alternate_lng = ?,
               geocoded_at = CASE WHEN ? IS NULL THEN geocoded_at ELSE datetime('now') END
         WHERE id = ? AND club_id = ?`,
@@ -234,12 +255,14 @@ export async function updateProfile({ db, user, scope, body, ip }) {
     .bind(
       pickupAreaId,
       homeAddress,
-      home.lat,
-      home.lng,
+      homeLat,
+      homeLng,
+      geo?.label ?? (addressChanged ? '' : household.home_geocode_label ?? ''),
+      geo?.confidence ?? (addressChanged ? '' : household.home_geocode_confidence ?? ''),
       alternateAddress,
       alternate.lat,
       alternate.lng,
-      home.lat,
+      homeLat,
       household.id,
       clubId,
     )
@@ -298,5 +321,17 @@ export async function updateProfile({ db, user, scope, body, ip }) {
     }
   }
 
-  return getMe({ db, user: { ...user, display_name: displayName, phone: contact }, scope });
+  const me = await getMe({ db, user: { ...user, display_name: displayName, phone: contact }, scope });
+
+  // Tell the family what we matched. A geocoder that cannot find a street
+  // often returns the middle of the city without complaining, so the answer
+  // is shown for confirmation rather than quietly treated as fact.
+  return {
+    ...me,
+    geocode: geo
+      ? { found: true, label: geo.label, confidence: geo.confidence }
+      : addressChanged && home.lat == null
+        ? { found: false }
+        : null,
+  };
 }

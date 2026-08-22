@@ -100,10 +100,67 @@ which a test asserts.
   roads with one-ways. ORS returns an asymmetric matrix; the solver reads it
   correctly, but the return-leg reversal shortcut is only exactly right when
   the matrix is symmetric.
-- **Addresses must be geocoded.** Nothing geocodes them yet — `home_lat`/
-  `home_lng` are set manually or by an importer. Un-geocoded families are
-  reported in `needsAddress` rather than dropped, so they surface instead of
-  vanishing.
+- **Geocoding accuracy is only as good as what a parent types.** Addresses are
+  resolved once via Nominatim when a family saves them (see below). A lookup
+  that fails leaves the family without coordinates, and they are reported in
+  `needsAddress` rather than dropped — they surface instead of vanishing.
 - **Suggestions are advisory.** Nothing is written until a coordinator presses
   Accept. Deciding which adult drives someone's child is not a decision to
   automate silently.
+
+
+## Geocoding
+
+Route optimization needs coordinates; a parent typing "100 Ericksen Ave NE"
+cannot supply them. Addresses are resolved once, on save, via Nominatim
+(OpenStreetMap) — free, no key, no account.
+
+This is the one place the system deliberately sends a home address to a third
+party, so the trade is made as narrow as it can be:
+
+- The lookup runs **on the Worker**, never in the browser, so the family's IP
+  and browser fingerprint are never exposed — only an address string, arriving
+  from a datacentre.
+- Nothing identifying travels with it: no child name, no parent name, no club,
+  no team, no household id. A test asserts this.
+- The result is stored, so an address is looked up **once**. Re-saving an
+  unchanged address does not re-query — also asserted by a test.
+- It is optional. Coordinates can be typed manually instead, and a family who
+  does neither is simply reported under `needsAddress`.
+- The UI says all of this in plain language above the address field, before
+  anything is sent.
+
+### Confidence matters more than it looks
+
+A geocoder that cannot find a street will often return the **centre of the
+city** instead, with no error. Stored as bare coordinates that is
+indistinguishable from a correct answer, and the first anyone knows is a
+driver parked a mile from the child.
+
+So every match is classified — `exact`, `street`, `area`, `approximate` — and
+the matched label is stored alongside the coordinates. Anything vaguer than a
+street keeps the profile dialog open and asks the family to confirm or refine,
+rather than closing on a quiet maybe.
+
+Verified against the live service:
+
+| Query | Result |
+|---|---|
+| `100 Ericksen Ave NE, Bainbridge Island, WA` | `exact`, 47.6250 / -122.5169 |
+| `Battle Point Dr NE, Bainbridge Island, WA` | `street` |
+| `99999 Completely Fake Street, Bainbridge Island, WA` | not found — no bogus fallback |
+
+### Limits
+
+- **Nominatim's usage policy discourages bulk or systematic queries.** One
+  lookup per family, once, is within the spirit of it; the admin backfill is
+  paced at roughly one per second and capped per run. A club large enough to
+  geocode hundreds of addresses regularly should self-host Nominatim or pay for
+  a geocoder — `geocoderFor()` is the seam, and `GEOCODER=off` disables it
+  entirely.
+- **Results are biased to one country** (`GEOCODE_COUNTRIES`, default `us`).
+  Wrong-country matches are the most common way a geocoder confidently returns
+  a house three thousand miles from the right one.
+- **Nothing re-geocodes on its own.** If a family moves and edits their
+  address, that counts as a change and is looked up again; a street that gets
+  renamed underneath them does not.

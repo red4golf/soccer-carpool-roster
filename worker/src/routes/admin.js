@@ -7,6 +7,7 @@
 
 import { HttpError, audit } from '../lib/scope.js';
 import { clockTime, integer, isoDate, oneOf, safeUrl, text } from '../lib/validate.js';
+import { geocoderFor, geocodeSequential } from '../lib/geocode.js';
 
 export async function adminRequest(context) {
   if (context.request.method === 'GET') return overview(context);
@@ -33,6 +34,7 @@ export async function adminRequest(context) {
     join_pool: joinPool,
     leave_pool: leavePool,
     export_backup: exportBackup,
+    geocode_households: geocodeHouseholds,
   };
   const handler = handlers[action];
   if (!handler) throw new HttpError(400, 'Unknown action.');
@@ -829,4 +831,84 @@ async function unenrollChild({ db, scope, user, body, ip }) {
     subjectType: 'team', subjectId: team.id, reason: `person ${personId}`, ip,
   });
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Geocoding backfill
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve coordinates for households that have an address but no location.
+ *
+ * Only reaches families who typed an address before geocoding existed, or
+ * whose lookup failed at the time. Deliberately club_admin only and always
+ * logged: it sends home addresses to a third party, and that should be a
+ * decision somebody made, not a background job nobody remembers enabling.
+ *
+ * Paced at roughly one per second to respect the geocoder's rate limit, and
+ * capped per run so a Worker invocation cannot run past its time budget.
+ */
+async function geocodeHouseholds({ db, env, scope, user, body, ip }) {
+  const clubId = clubGate(scope, body.clubId, 'manage_teams');
+  const limit = integer(body.limit ?? 20, { field: 'Limit', min: 1, max: 40 });
+
+  const pending = (
+    await db
+      .prepare(
+        `SELECT id, home_address FROM households
+          WHERE club_id = ? AND home_address <> '' AND home_lat IS NULL
+          ORDER BY id LIMIT ?`,
+      )
+      .bind(clubId, limit)
+      .all()
+  ).results;
+
+  if (!pending.length) {
+    const remaining = await db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM households
+          WHERE club_id = ? AND home_address <> '' AND home_lat IS NULL`,
+      )
+      .bind(clubId)
+      .first();
+    return { ok: true, processed: 0, located: 0, remaining: remaining.n };
+  }
+
+  const geocoder = geocoderFor(env);
+  const results = await geocodeSequential(
+    pending.map(row => ({ id: row.id, address: row.home_address })),
+    geocoder,
+    { delayMs: Number(env?.GEOCODE_DELAY_MS ?? 1100) },
+  );
+
+  let located = 0;
+  for (const { id, result } of results) {
+    if (!result) continue;
+    located++;
+    await db
+      .prepare(
+        `UPDATE households
+            SET home_lat = ?, home_lng = ?, home_geocode_label = ?,
+                home_geocode_confidence = ?, geocoded_at = datetime('now')
+          WHERE id = ? AND club_id = ?`,
+      )
+      .bind(result.lat, result.lng, result.label, result.confidence, id, clubId)
+      .run();
+  }
+
+  const remaining = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM households
+        WHERE club_id = ? AND home_address <> '' AND home_lat IS NULL`,
+    )
+    .bind(clubId)
+    .first();
+
+  await audit(db, {
+    clubId, actor: user, action: 'households_geocoded',
+    subjectType: 'club', subjectId: clubId,
+    reason: `${located} of ${results.length} addresses located`, ip,
+  });
+
+  return { ok: true, processed: results.length, located, remaining: remaining.n };
 }
