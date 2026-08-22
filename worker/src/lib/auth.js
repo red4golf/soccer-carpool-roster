@@ -144,6 +144,40 @@ export async function resolveUser(db, claims) {
   return inserted;
 }
 
+/**
+ * Turn any invitations addressed to this email into real memberships.
+ *
+ * Membership is created ACTIVE: a coordinator already vouched for this
+ * address when they sent the invite, and a second approval step would only
+ * add a queue nobody drains. Someone who signs in WITHOUT an invite gets
+ * nothing at all — no club, no team, no data — and is told to ask their
+ * coordinator. That is the whole gate.
+ */
+export async function claimInvitations(db, user) {
+  const pending = await db
+    .prepare(`SELECT * FROM invitations WHERE lower(email) = lower(?) AND claimed_at IS NULL`)
+    .bind(user.email)
+    .all();
+
+  const rows = pending.results ?? pending;
+  for (const invite of rows) {
+    await db
+      .prepare(
+        `INSERT INTO memberships (club_id, team_id, user_id, role, status, invited_by, approved_at, approved_by)
+         VALUES (?, ?, ?, ?, 'active', ?, datetime('now'), ?)
+         ON CONFLICT DO NOTHING`,
+      )
+      .bind(invite.club_id, invite.team_id, user.id, invite.role, invite.invited_by, invite.invited_by)
+      .run();
+
+    await db
+      .prepare(`UPDATE invitations SET claimed_at = datetime('now'), claimed_by = ? WHERE id = ?`)
+      .bind(user.id, invite.id)
+      .run();
+  }
+  return rows.length;
+}
+
 /** Extract the bearer token from a request. */
 export function bearerToken(request) {
   const header = request.headers.get('authorization') || '';

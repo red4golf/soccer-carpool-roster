@@ -1,4 +1,6 @@
 import { configureApi, get, post, once, ApiError } from './api.js';
+import { modal } from './ui.js';
+import { openCoordinator } from './coordinator.js';
 import {
   h, safeUrl, initials, shortDate, longDate, clock,
   isUpcoming, directionLabel, usesLeg, miles,
@@ -201,14 +203,18 @@ function renderPending() {
   root.innerHTML = `<main class="pinPage"><section class="pinCard pendingCard">
     <span class="brandMark">SC</span>
     <p class="eyebrow">SIGNED IN AS ${h(email)}</p>
-    <h1>Waiting for approval</h1>
-    <p>Complete your family profile so your coordinator can approve you and add your children to a roster.</p>
+    <h1>You are not on a team yet</h1>
+    <p>Access starts with an invitation. Ask your team coordinator to invite
+       <b>${h(email)}</b> — the address you just signed in with. Once they do,
+       reopen this page and your team will be here.</p>
+    <p class="privacyNote">If you used a different address than the one they have,
+       that is usually the reason.</p>
     <div class="pendingActions">
-      <button class="primary" data-profile>Complete profile</button>
+      <button class="primary" data-retry>Check again</button>
       <button class="textButton" data-signout>Sign out</button>
     </div>
   </section></main>`;
-  root.querySelector('[data-profile]').addEventListener('click', openProfile);
+  root.querySelector('[data-retry]').addEventListener('click', () => loadMe());
   root.querySelector('[data-signout]').addEventListener('click', () => firebase.auth().signOut());
 }
 
@@ -469,7 +475,10 @@ function bind() {
 
   on('[data-signout]', () => firebase.auth().signOut());
   on('[data-profile]', openProfile);
-  on('[data-coordinate]', openCoordinator);
+  on('[data-coordinate]', () => openCoordinator({
+    team: state.membership,
+    onChanged: () => { refresh().catch(showError); },
+  }));
 
   root.querySelector('[data-team]')?.addEventListener('change', async event => {
     const teamId = Number(event.target.value);
@@ -568,32 +577,6 @@ function showError(error) {
 }
 
 // --- modals ----------------------------------------------------------------
-
-function modal(title, inner) {
-  const host = document.createElement('div');
-  host.className = 'modalBackdrop';
-  host.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="${h(title)}">
-      <button class="close" aria-label="Close">×</button>
-      <p class="eyebrow">TEAM RIDE BOARD</p><h2>${h(title)}</h2>${inner}</div>`;
-  document.body.append(host);
-  document.body.style.overflow = 'hidden';
-
-  const close = () => { host.remove(); document.body.style.overflow = ''; previous?.focus?.(); };
-  const previous = document.activeElement;
-  host.querySelector('.close').addEventListener('click', close);
-  host.addEventListener('click', event => { if (event.target === host) close(); });
-  host.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { event.preventDefault(); close(); return; }
-    if (event.key !== 'Tab') return;
-    const items = [...host.querySelectorAll('button,input,select,textarea,a[href]')].filter(el => !el.disabled);
-    if (!items.length) return;
-    const [first, last] = [items[0], items.at(-1)];
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-  });
-  requestAnimationFrame(() => host.querySelector('input,select,button:not(.close)')?.focus());
-  return { host, close };
-}
 
 function openRideModal() {
   const household = state.me.households.find(hh => hh.clubId === state.membership.clubId);
@@ -799,73 +782,6 @@ function formatLogTime(value) {
   const iso = raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`;
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? raw : date.toLocaleString();
-}
-
-// --- coordinator: route optimisation --------------------------------------
-
-function openCoordinator() {
-  const event = state.board.event;
-  const { host } = modal('Coordinate rides', `
-    <p>Suggest who drives whom for <b>${h(event.title)}</b>, then accept the parts you like.
-      Nothing is saved until you press Accept.</p>
-    <div class="two">
-      <label>Leg<select data-leg>
-        <option value="to">To the event</option>
-        <option value="from">Home afterwards</option>
-      </select></label>
-      <button class="primary" data-suggest>Suggest carpools</button>
-    </div>
-    <div data-plan></div>`);
-
-  const slot = host.querySelector('[data-plan]');
-
-  host.querySelector('[data-suggest]').addEventListener('click', async () => {
-    const leg = host.querySelector('[data-leg]').value;
-    slot.innerHTML = '<p>Working out the shortest routes…</p>';
-    try {
-      const plan = await post('/api/plan', { eventId: event.id, leg });
-      state.plan = plan;
-      slot.innerHTML = renderPlan(plan);
-      slot.querySelector('[data-accept]')?.addEventListener('click', async () => {
-        const assignments = plan.routes.flatMap(r => r.riders.map(rider => ({
-          requestId: rider.requestId, offerId: r.offerId,
-        })));
-        await guard(async () => {
-          const result = await post('/api/plan/accept', { eventId: event.id, leg, assignments });
-          host.remove();
-          document.body.style.overflow = '';
-          await refresh(`${result.written} assignments saved.`);
-        });
-      });
-    } catch (error) {
-      slot.innerHTML = `<div class="notice error">${h(error.message)}</div>`;
-    }
-  });
-}
-
-function renderPlan(plan) {
-  if (!plan.routes.length) {
-    return `<div class="notice">No suggestions — there are no drivers and riders to match for this leg yet.</div>`;
-  }
-  return `
-    <div class="planSummary">
-      <b>${plan.routes.length} cars</b> · ${miles(plan.totalKm)} total driving
-      <small>Distances from ${plan.provider === 'haversine' ? 'straight-line estimates' : 'road routing'}.</small>
-    </div>
-    ${plan.routes.map(route => `
-      <article class="planCard">
-        <h4>${h(route.driverName)}</h4>
-        <p>${route.riders.length} riders · ${miles(route.distanceKm)} · about ${route.durationMin} min</p>
-        <ol>${route.riders.map(r => `<li>${h(r.childName)}</li>`).join('')}</ol>
-      </article>`).join('')}
-    ${plan.unassigned.length ? `<div class="notice error">
-      <b>No seat for:</b> ${h(plan.unassigned.map(u => u.childName).join(', '))}. More drivers needed.
-    </div>` : ''}
-    ${plan.needsAddress.length ? `<div class="notice">
-      <b>Missing an address:</b> ${h(plan.needsAddress.map(u => u.childName).join(', '))}.
-      They cannot be routed until their family adds one.
-    </div>` : ''}
-    <button class="primary" data-accept>Accept these assignments</button>`;
 }
 
 // --- lifecycle -------------------------------------------------------------

@@ -66,3 +66,56 @@ html{scroll-padding-top:66px}body{padding-bottom:calc(72px + env(safe-area-inset
   html{scroll-behavior:auto}
   *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
 }
+
+/* --- coordinator panel --------------------------------------------------- */
+
+.wideModal{max-width:min(920px,94vw)}
+.coordBody{margin-top:8px}
+
+.coordTabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;
+  border-bottom:1px solid var(--line);padding-bottom:12px}
+.coordTabs button{min-height:44px;padding:0 14px;border:1px solid var(--line);border-radius:10px;
+  background:var(--paper);color:var(--muted);font-weight:600}
+.coordTabs button.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+.badgeCount{display:inline-block;min-width:20px;padding:0 6px;margin-left:4px;border-radius:999px;
+  background:var(--amber);color:#3a2a00;font-size:12px;font-weight:800}
+
+.coordPanel h3{margin:22px 0 6px}
+.coordPanel h3:first-child{margin-top:0}
+.coordPanel .muted{color:var(--muted);font-size:14px;margin:0 0 12px;line-height:1.5}
+
+.coordForm{padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--paper);
+  margin-bottom:20px}
+.coordForm label{display:block;margin-bottom:12px;font-size:14px;font-weight:600}
+.coordForm input,.coordForm select,.coordForm textarea{width:100%;min-height:46px;margin-top:6px;
+  padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);
+  font-weight:400}
+.coordForm textarea{min-height:80px;resize:vertical}
+.coordForm .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.formActions{display:flex;gap:8px;flex-wrap:wrap}
+
+.checkboxRow{display:flex;gap:12px;align-items:flex-start}
+.checkboxRow input{width:auto;min-height:auto;margin-top:4px;flex:0 0 auto}
+.checkboxRow small{display:block;margin-top:4px;color:var(--muted);font-weight:400;line-height:1.5}
+
+.coordList{list-style:none;margin:0 0 20px;padding:0}
+.coordList li{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--paper);
+  margin-bottom:8px}
+.coordList.compact li{padding:8px 14px}
+.coordList small{display:block;margin-top:2px;color:var(--muted);font-size:13px}
+.rowActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rowActions select{min-height:44px;padding:0 10px;border:1px solid var(--line);border-radius:10px;
+  background:#fff;color:var(--ink);font-size:14px}
+
+.confirmSlot{padding:12px;border:1px solid var(--amber);border-radius:12px;background:#fdf6e7}
+.confirmSlot p{margin:0 0 10px}
+.confirmSlot div{display:flex;gap:8px}
+
+@media(max-width:620px){
+  .coordForm .two{grid-template-columns:1fr}
+  .coordList li{flex-direction:column;align-items:stretch}
+  .rowActions{justify-content:flex-start}
+  .coordTabs{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
+  .coordTabs button{flex:0 0 auto}
+}

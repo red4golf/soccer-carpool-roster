@@ -89,6 +89,10 @@ export class Scope {
 
   /** Effective role on a team, accounting for club-wide roles. */
   roleOnTeam(teamId, clubId) {
+    // A platform operator holds no membership rows, but `can()` already
+    // grants them everything; report the matching role so the UI agrees with
+    // what the API will actually permit.
+    if (this.isPlatformAdmin) return 'club_admin';
     const direct = this.byTeam.get(teamId);
     const viaClub = clubId != null ? this.byClub.get(clubId) : undefined;
     if (!direct && !viaClub) return null;
@@ -140,6 +144,15 @@ export async function loadScope(db, user) {
     .all();
 
   const scope = new Scope(user, memberships.results ?? memberships);
+
+  // The platform operator sees every team without holding a membership row.
+  // Without this they would resolve to an empty team list and land on the
+  // approval screen — the same failure that stranded club admins.
+  if (scope.isPlatformAdmin) {
+    const all = await db.prepare(`SELECT id FROM teams WHERE archived = 0`).all();
+    scope.visibleTeamIds = (all.results ?? all).map(row => row.id);
+    return scope;
+  }
 
   const teamIds = new Set(scope.directTeamIds);
   const adminClubs = [...scope.byClub.entries()]

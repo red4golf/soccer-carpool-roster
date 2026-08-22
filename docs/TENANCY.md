@@ -31,7 +31,7 @@ join. That redundancy is on purpose: it means every query can filter on
 than returning another club's rows. The alternative — deriving scope through
 three joins — fails open the moment someone writes a query that skips one.
 
-A test asserts the column exists on all sixteen tenant tables, so a future
+A test asserts the column exists on every tenant table, so a future
 migration cannot quietly drop it.
 
 Two smaller decisions in the same spirit:
@@ -42,6 +42,32 @@ Two smaller decisions in the same spirit:
 - **An empty team list selects nothing.** `scope.visibleTeamIds` for a pending
   user is `[]`, and the query builder renders that as `IN (NULL)` — zero rows.
   The failure mode to avoid is an empty filter degrading to an unfiltered scan.
+
+## Getting in
+
+Access starts with a coordinator naming an email address. There is no
+self-signup and no join code.
+
+The previous design let anyone create an account and then wait for approval,
+which meant an unbounded queue of strangers attached to a club full of
+children's data, and an approval list nobody drains. Here, signing in without
+an invitation gives you a club-less account that can see nothing at all and a
+screen telling you to ask your coordinator.
+
+Because an admin already vouched for the address, claiming an invite creates
+an **active** membership rather than a pending one — a second approval step
+would only add a queue. Invitations are claimed on the invitee's next request,
+so inviting someone who signed in yesterday still works.
+
+Two consequences worth stating:
+
+- **The gate is the email address.** A parent who signs in with a different
+  address than the one their coordinator typed sees nothing, and the pending
+  screen says so explicitly, because "I signed up and nothing happened" is
+  otherwise unanswerable.
+- **`invite_members` cannot grant `club_admin`.** The role is restricted to
+  parent / coach / team_admin at the endpoint, so a team coordinator cannot
+  invite a confederate straight to club level.
 
 ## Roles
 

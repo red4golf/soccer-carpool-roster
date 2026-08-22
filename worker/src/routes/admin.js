@@ -15,7 +15,14 @@ export async function adminRequest(context) {
   const handlers = {
     approve_member: approveMember,
     set_member_role: setMemberRole,
+    create_club: createClub,
+    update_club: updateClub,
     create_team: createTeam,
+    update_team: updateTeam,
+    invite_members: inviteMembers,
+    revoke_invite: revokeInvite,
+    create_person: createPerson,
+    unenroll_child: unenrollChild,
     upsert_event: upsertEvent,
     upsert_location: upsertLocation,
     upsert_pickup_area: upsertPickupArea,
@@ -51,14 +58,45 @@ async function teamGate(db, scope, teamId, permission = 'manage_events') {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * An absent query parameter must read as "not supplied", not as zero.
+ * `Number(null)` is 0 and `Number.isInteger(0)` is true, so the obvious
+ * version treated a missing teamId as team 0 and 404'd every admin GET that
+ * did not name a team.
+ */
+function optionalId(url, name) {
+  const raw = url.searchParams.get(name);
+  if (raw == null || raw === '') return null;
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
 async function overview({ db, scope, url }) {
-  const clubId = Number(url.searchParams.get('clubId'));
-  const teamId = Number(url.searchParams.get('teamId'));
+  const clubId = optionalId(url, 'clubId');
+  const teamId = optionalId(url, 'teamId');
 
   // A team admin gets their team; a club admin gets the whole club.
-  const isClubAdmin = Number.isInteger(clubId) && scope.isClubAdmin(clubId);
+  const isClubAdmin = clubId != null && (scope.isClubAdmin(clubId) || scope.isPlatformAdmin);
   let teamIds = scope.visibleTeamIds;
-  if (Number.isInteger(teamId)) {
+
+  // Narrow to the requested club. Without this, someone who administers two
+  // clubs — or the platform operator, who is in every club — got every team
+  // they can see regardless of which club the UI asked about, silently
+  // blending two organisations' rosters into one screen.
+  if (clubId != null && teamIds.length) {
+    const owned = (
+      await db
+        .prepare(
+          `SELECT id FROM teams
+            WHERE club_id = ? AND id IN (${teamIds.map(() => '?').join(',')})`,
+        )
+        .bind(clubId, ...teamIds)
+        .all()
+    ).results;
+    teamIds = owned.map(row => row.id);
+  }
+
+  if (teamId != null) {
     const team = await teamGate(db, scope, teamId, 'manage_events');
     teamIds = [team.id];
   } else if (!isClubAdmin) {
@@ -70,7 +108,35 @@ async function overview({ db, scope, url }) {
     teamIds = manageable;
   }
 
-  if (!teamIds.length) throw new HttpError(404, 'Not found.', 'out_of_scope');
+  // Clubs this caller administers. Needed before any team exists, which is
+  // exactly the state a brand-new club is in — returning 404 here would make
+  // a club impossible to set up through the UI that is supposed to set it up.
+  const adminClubIds = scope.isPlatformAdmin
+    ? ((await db.prepare(`SELECT id FROM clubs`).all()).results ?? []).map(r => r.id)
+    : [...scope.byClub.entries()].filter(([, role]) => role === 'club_admin').map(([id]) => id);
+
+  const clubs = adminClubIds.length
+    ? (
+        await db
+          .prepare(
+            `SELECT id, name, slug, timezone, allow_cross_team_pools
+               FROM clubs WHERE id IN (${adminClubIds.map(() => '?').join(',')}) ORDER BY name`,
+          )
+          .bind(...adminClubIds)
+          .all()
+      ).results
+    : [];
+
+  if (!teamIds.length) {
+    if (!clubs.length) throw new HttpError(404, 'Not found.', 'out_of_scope');
+    return {
+      teams: [], events: [], roster: [], members: [], invitations: [],
+      locations: [], pickupAreas: [], clubs,
+      canManageClub: true,
+      isPlatformAdmin: scope.isPlatformAdmin,
+      counts: { teams: 0, events: 0, players: 0, pendingMembers: 0, openInvites: 0 },
+    };
+  }
   const list = teamIds.map(() => '?').join(',');
 
   const teams = (
@@ -120,19 +186,37 @@ async function overview({ db, scope, url }) {
     ? (await db.prepare(`SELECT id, club_id, name FROM pickup_areas WHERE club_id IN (${clubList})`).bind(...clubIds).all()).results
     : [];
 
+  // Invitations that have not yet been taken up — the coordinator's list of
+  // "who have I asked but who has not signed in yet".
+  const invitations = (
+    await db
+      .prepare(
+        `SELECT i.id, i.team_id, i.club_id, i.email, i.role, i.created_at, u.display_name AS invited_by_name
+           FROM invitations i LEFT JOIN users u ON u.id = i.invited_by
+          WHERE i.team_id IN (${list}) AND i.claimed_at IS NULL
+          ORDER BY i.created_at DESC`,
+      )
+      .bind(...teamIds)
+      .all()
+  ).results;
+
   return {
     teams,
     events,
     roster,
     members,
+    invitations,
     locations,
     pickupAreas: areas,
-    canManageClub: isClubAdmin,
+    clubs,
+    canManageClub: isClubAdmin || scope.isPlatformAdmin,
+    isPlatformAdmin: scope.isPlatformAdmin,
     counts: {
       teams: teams.length,
       events: events.length,
       players: roster.length,
       pendingMembers: members.filter(m => m.status === 'pending').length,
+      openInvites: invitations.length,
     },
   };
 }
@@ -474,4 +558,275 @@ async function exportBackup({ db, scope, user, body, ip }) {
   });
 
   return { ok: true, exportedAt: new Date().toISOString(), backup };
+}
+
+// ---------------------------------------------------------------------------
+// Clubs and teams
+// ---------------------------------------------------------------------------
+
+const slugify = value =>
+  String(value).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+
+/**
+ * Create a club. Platform operator only.
+ *
+ * Deliberately not self-service: a club is a tenant boundary, and anyone who
+ * can mint one can mint a container for other people's children. The creator
+ * becomes its first club_admin, because a club with no administrator cannot
+ * be administered.
+ */
+async function createClub({ db, scope, user, body, ip }) {
+  if (!scope.isPlatformAdmin) throw new HttpError(404, 'Not found.', 'out_of_scope');
+
+  const name = text(body.name, { field: 'Club name', max: 120, required: true });
+  const slug = slugify(body.slug || name);
+  if (!slug) throw new HttpError(400, 'That club name cannot be turned into a web address.');
+
+  const clash = await db.prepare(`SELECT id FROM clubs WHERE slug = ?`).bind(slug).first();
+  if (clash) throw new HttpError(409, 'A club with a similar name already exists.');
+
+  const club = await db
+    .prepare(
+      `INSERT INTO clubs (name, slug, timezone, allow_cross_team_pools)
+       VALUES (?,?,?,?) RETURNING id`,
+    )
+    .bind(
+      name,
+      slug,
+      text(body.timezone, { max: 60 }) || 'America/Los_Angeles',
+      body.allowCrossTeamPools ? 1 : 0,
+    )
+    .first();
+
+  await db
+    .prepare(
+      `INSERT INTO memberships (club_id, team_id, user_id, role, status, approved_at, approved_by)
+       VALUES (?, NULL, ?, 'club_admin', 'active', datetime('now'), ?)`,
+    )
+    .bind(club.id, user.id, user.id)
+    .run();
+
+  await audit(db, {
+    clubId: club.id, actor: user, action: 'club_created',
+    subjectType: 'club', subjectId: club.id, reason: name, ip,
+  });
+  return { ok: true, clubId: club.id, slug };
+}
+
+async function updateClub({ db, scope, user, body, ip }) {
+  const clubId = clubGate(scope, body.clubId, 'manage_teams');
+  const name = text(body.name, { field: 'Club name', max: 120, required: true });
+  const pooling = body.allowCrossTeamPools ? 1 : 0;
+
+  const before = await db
+    .prepare(`SELECT allow_cross_team_pools FROM clubs WHERE id = ?`)
+    .bind(clubId)
+    .first();
+
+  await db
+    .prepare(`UPDATE clubs SET name = ?, allow_cross_team_pools = ? WHERE id = ?`)
+    .bind(name, pooling, clubId)
+    .run();
+
+  // Flipping pooling is privacy-relevant either way: it grants or withdraws
+  // cross-team visibility of children. It gets its own log line rather than
+  // being folded into a generic "club updated".
+  if (before && before.allow_cross_team_pools !== pooling) {
+    await audit(db, {
+      clubId, actor: user, action: pooling ? 'pooling_enabled' : 'pooling_disabled',
+      subjectType: 'club', subjectId: clubId, ip,
+    });
+  }
+  return { ok: true };
+}
+
+async function updateTeam({ db, scope, user, body, ip }) {
+  const team = await teamGate(db, scope, body.teamId, 'manage_events');
+  const name = text(body.name, { field: 'Team name', max: 80, required: true });
+  const archived = body.archived ? 1 : 0;
+
+  await db
+    .prepare(
+      `UPDATE teams SET name = ?, season = ?, age_group = ?, archived = ?
+        WHERE id = ? AND club_id = ?`,
+    )
+    .bind(
+      name,
+      text(body.season, { max: 40 }),
+      text(body.ageGroup, { max: 40 }),
+      archived,
+      team.id,
+      team.club_id,
+    )
+    .run();
+
+  await audit(db, {
+    clubId: team.club_id, actor: user, action: archived ? 'team_archived' : 'team_updated',
+    subjectType: 'team', subjectId: team.id, reason: name, ip,
+  });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Invitations — the only way into a club
+// ---------------------------------------------------------------------------
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/**
+ * Invite one or many people to a team by email address.
+ *
+ * Bulk, because a club is hundreds of families and inviting them one at a
+ * time is how a coordinator gives up. Invalid addresses come back in the
+ * response rather than being silently skipped: a mistyped invite is a parent
+ * who never gets access and has no way to find out why.
+ */
+async function inviteMembers({ db, scope, user, body, ip }) {
+  const team = await teamGate(db, scope, body.teamId, 'approve_member');
+  const role = oneOf(body.role ?? 'parent', ['parent', 'coach', 'team_admin'], 'Role');
+
+  const raw = Array.isArray(body.emails)
+    ? body.emails
+    : String(body.emails ?? '').split(/[\s,;]+/);
+
+  const emails = [...new Set(raw.map(e => String(e).toLowerCase().trim()).filter(Boolean))];
+  if (!emails.length) throw new HttpError(400, 'Enter at least one email address.');
+  if (emails.length > 200) throw new HttpError(400, 'Invite at most 200 people at a time.');
+
+  const invited = [];
+  const rejected = [];
+  const alreadyMembers = [];
+
+  for (const email of emails) {
+    if (!EMAIL.test(email)) {
+      rejected.push(email);
+      continue;
+    }
+
+    // Someone who already has a login gets their membership immediately —
+    // there is nothing to wait for.
+    const existingUser = await db
+      .prepare(`SELECT id FROM users WHERE lower(email) = ?`)
+      .bind(email)
+      .first();
+
+    if (existingUser) {
+      const already = await db
+        .prepare(`SELECT id FROM memberships WHERE user_id = ? AND team_id = ?`)
+        .bind(existingUser.id, team.id)
+        .first();
+      if (already) {
+        alreadyMembers.push(email);
+        continue;
+      }
+      await db
+        .prepare(
+          `INSERT INTO memberships (club_id, team_id, user_id, role, status, invited_by, approved_at, approved_by)
+           VALUES (?,?,?,?, 'active', ?, datetime('now'), ?) ON CONFLICT DO NOTHING`,
+        )
+        .bind(team.club_id, team.id, existingUser.id, role, user.id, user.id)
+        .run();
+      invited.push(email);
+      continue;
+    }
+
+    await db
+      .prepare(
+        `INSERT INTO invitations (club_id, team_id, email, role, invited_by)
+         VALUES (?,?,?,?,?)
+         ON CONFLICT (club_id, IFNULL(team_id, 0), email)
+         DO UPDATE SET role = excluded.role, invited_by = excluded.invited_by,
+                       created_at = datetime('now'), claimed_at = NULL, claimed_by = NULL`,
+      )
+      .bind(team.club_id, team.id, email, role, user.id)
+      .run();
+    invited.push(email);
+  }
+
+  await audit(db, {
+    clubId: team.club_id, actor: user, action: 'members_invited',
+    subjectType: 'team', subjectId: team.id,
+    reason: `${invited.length} invited as ${role}`, ip,
+  });
+
+  return { ok: true, invited, rejected, alreadyMembers };
+}
+
+async function revokeInvite({ db, scope, user, body, ip }) {
+  const inviteId = integer(body.inviteId, { field: 'Invitation' });
+  const invite = await db.prepare(`SELECT * FROM invitations WHERE id = ?`).bind(inviteId).first();
+  if (!invite) throw new HttpError(404, 'Not found.', 'out_of_scope');
+  if (!scope.can('approve_member', { teamId: invite.team_id, clubId: invite.club_id })) {
+    throw new HttpError(404, 'Not found.', 'out_of_scope');
+  }
+
+  await db.prepare(`DELETE FROM invitations WHERE id = ?`).bind(inviteId).run();
+  await audit(db, {
+    clubId: invite.club_id, actor: user, action: 'invite_revoked',
+    subjectType: 'team', subjectId: invite.team_id, reason: invite.email, ip,
+  });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Roster
+// ---------------------------------------------------------------------------
+
+/** Add a child to the club roster and enrol them on a team in one step. */
+async function createPerson({ db, scope, user, body, ip }) {
+  const team = await teamGate(db, scope, body.teamId, 'manage_roster');
+  const name = text(body.name, { field: 'Player name', max: 120, required: true });
+
+  // Reuse an existing child of the same name rather than creating a second
+  // record: this is exactly how a sibling ends up on two teams, and how a
+  // player who moves teams keeps one household and one address.
+  const existing = await db
+    .prepare(`SELECT id FROM people WHERE club_id = ? AND lower(name) = lower(?)`)
+    .bind(team.club_id, name)
+    .first();
+
+  const personId = existing
+    ? existing.id
+    : (
+        await db
+          .prepare(`INSERT INTO people (club_id, name) VALUES (?,?) RETURNING id`)
+          .bind(team.club_id, name)
+          .first()
+      ).id;
+
+  await db
+    .prepare(
+      `INSERT INTO enrollments (club_id, team_id, person_id) VALUES (?,?,?)
+       ON CONFLICT (team_id, person_id) DO NOTHING`,
+    )
+    .bind(team.club_id, team.id, personId)
+    .run();
+
+  await audit(db, {
+    clubId: team.club_id, actor: user, action: 'player_enrolled',
+    subjectType: 'team', subjectId: team.id, reason: name, ip,
+  });
+  return { ok: true, personId, reusedExisting: Boolean(existing) };
+}
+
+/**
+ * Take a child off a team roster.
+ *
+ * Removes the enrolment, not the person: the same child may be rostered on
+ * another team, and their household, address and ride history must survive.
+ */
+async function unenrollChild({ db, scope, user, body, ip }) {
+  const team = await teamGate(db, scope, body.teamId, 'manage_roster');
+  const personId = integer(body.personId, { field: 'Child' });
+
+  await db
+    .prepare(`DELETE FROM enrollments WHERE team_id = ? AND person_id = ? AND club_id = ?`)
+    .bind(team.id, personId, team.club_id)
+    .run();
+
+  await audit(db, {
+    clubId: team.club_id, actor: user, action: 'player_unenrolled',
+    subjectType: 'team', subjectId: team.id, reason: `person ${personId}`, ip,
+  });
+  return { ok: true };
 }

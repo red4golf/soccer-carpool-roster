@@ -5,7 +5,7 @@
 // A handler never sees an unauthenticated request and never sees a Scope it
 // did not earn. Public routes are listed explicitly and are the exception.
 
-import { bearerToken, resolveUser, verifyIdToken } from './lib/auth.js';
+import { bearerToken, claimInvitations, resolveUser, verifyIdToken } from './lib/auth.js';
 import { HttpError, loadScope } from './lib/scope.js';
 import { jsonBody } from './lib/validate.js';
 
@@ -72,7 +72,14 @@ export default {
 
       const claims = await verifyIdToken(bearerToken(request), env.FIREBASE_PROJECT_ID);
       const user = await resolveUser(env.DB, claims);
-      const scope = await loadScope(env.DB, user);
+      let scope = await loadScope(env.DB, user);
+
+      // Only look for invitations when the caller currently belongs nowhere.
+      // Established users skip the query entirely, and someone invited after
+      // they first signed in still picks it up on their next request.
+      if (scope.isPending && !scope.isPlatformAdmin) {
+        if (await claimInvitations(env.DB, user)) scope = await loadScope(env.DB, user);
+      }
 
       const context = {
         env,

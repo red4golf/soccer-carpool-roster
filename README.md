@@ -18,9 +18,15 @@ docs/     design notes
 household vehicle. Add a teammate to your car. Everything works on a phone and
 installs to the home screen.
 
-**For coordinators.** Manage the schedule and roster, approve parents, and hit
-**Suggest carpools** to get a proposed driver-to-child assignment with routes
-already in the shortest order. Nothing is saved until you accept it.
+**For coordinators.** A single **Coordinate** panel covering schedule, roster,
+people, places, teams and club settings — plus **Suggest carpools**, which
+proposes a driver-to-child assignment with routes already in the shortest
+order. Nothing is saved until you accept it.
+
+Access is invite-only: paste a list of email addresses and those families are
+in. Anyone who signs in without an invitation sees nothing, and is told to ask
+their coordinator. Unreadable addresses are reported back rather than silently
+skipped.
 
 **For a club.** Many teams, isolated from each other by default, with an
 opt-in way to share cars between two teams at the same venue.
@@ -74,7 +80,7 @@ Full instructions, costs, and deployment in [docs/DEPLOY.md](docs/DEPLOY.md).
 cd worker && node --test test/*.test.js
 ```
 
-53 tests with no third-party dependencies. Isolation is tested adversarially —
+76 tests with no third-party dependencies. Isolation is tested adversarially —
 each case is an *attempt* to read another team's data, and passing means the
 attempt failed.
 
